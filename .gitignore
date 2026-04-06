@@ -1,0 +1,13 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+.idea/
+.venv/
+/__pycache__/
+*.pyc
+.VSCodeCounter
+# 日志文件
+logs/
+*.log
