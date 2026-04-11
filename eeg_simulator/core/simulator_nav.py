@@ -80,6 +80,9 @@ class EEGSimulator(QMainWindow):
         self.buffer_size = 5000
         self.samples_per_update = max(1, int(self.sampling_rate / 30))
         
+        # 信号生成状态 - 用于保持相位连续性 {patch_id: {'phase': current_phase}}
+        self._signal_states = {}
+        
         # 热力图刷新控制
         self._last_heatmap_update_time = 0.0  # 上次热力图更新的仿真时间
         self.heatmap_refresh_interval = self.config.get('heatmap_refresh_interval', 1000) / 1000.0  # 转换为秒
@@ -97,6 +100,9 @@ class EEGSimulator(QMainWindow):
         # 实时滤波状态存储 {channel_name: {'hp': zi_hp, 'lp': zi_lp, 'notch': zi_notch}}
         self._filter_states = {}
         self._filter_coeffs = {}
+        
+        # 噪声状态存储 {channel_name: {noise_type: state_dict}}
+        self._noise_states = {}
 
         # 选中的导联列表
         self.selected_channels = []
@@ -374,6 +380,12 @@ class EEGSimulator(QMainWindow):
         self.simulation_time = 0.0
         self._run_start_time = time.time()
         
+        # 重置信号生成状态，确保从初始相位开始
+        self._signal_states.clear()
+        
+        # 重置噪声状态
+        self._noise_states.clear()
+        
         # 更新UI
         self.status_run.setText("● " + tr('status_running'))
         self.status_run.setStyleSheet(f"color: {COLORS['accent']};")
@@ -404,6 +416,12 @@ class EEGSimulator(QMainWindow):
         self.timer.stop()
         self.status_timer.stop()
         
+        # 清除信号生成状态，下次启动时重新初始化
+        self._signal_states.clear()
+        
+        # 清除噪声状态
+        self._noise_states.clear()
+        
         # 更新UI
         self.status_run.setText("○ " + tr('status_stopped'))
         self.status_run.setStyleSheet(f"color: {COLORS['text_muted']};")
@@ -430,7 +448,11 @@ class EEGSimulator(QMainWindow):
             
             # 计算样本数
             dt = 1.0 / self.sampling_rate
-            n_samples = max(1, int(round(elapsed / dt)))
+            
+            # 计算样本数
+            n_samples = int(elapsed * self.sampling_rate)
+            if n_samples <= 0:
+                return
             
             # 生成时间序列
             t_start = self.simulation_time
@@ -448,7 +470,7 @@ class EEGSimulator(QMainWindow):
             
             # 添加噪声
             if self.noise_configs:
-                eeg_data = self._add_noise_batch(eeg_data, t)
+                eeg_data = self._add_noise_batch(eeg_data, t, n_samples)
             
             # 更新缓冲区
             self._update_buffers_batch(t, patch_signals, eeg_data, n_samples)
@@ -470,10 +492,21 @@ class EEGSimulator(QMainWindow):
             QMessageBox.critical(self, tr('error'), f"仿真失败: {str(e)}")
 
     def _generate_patch_signals_batch(self, t, n_samples):
-        """批量生成Patch信号"""
+        """批量生成Patch信号 - 保持相位连续性"""
         patch_signals = {}
+        dt = 1.0 / self.sampling_rate
+        
         for patch_id, patch in self.patches.items():
-            signals = self.signal_engine.generate_patch_waveform_batch(patch, self.simulation_time, n_samples)
+            # 初始化该patch的信号状态
+            if patch_id not in self._signal_states:
+                self._signal_states[patch_id] = {'phase': 0.0}
+            
+            state = self._signal_states[patch_id]
+            
+            # 使用连续性信号生成方法
+            signals = self.signal_engine.generate_continuous_waveform(
+                patch, n_samples, dt, state
+            )
             patch_signals[patch_id] = signals
         return patch_signals
 
@@ -731,13 +764,31 @@ class EEGSimulator(QMainWindow):
         
         return eeg_data
 
-    def _add_noise_batch(self, eeg_data, t):
-        """批量添加噪声"""
+    def _add_noise_batch(self, eeg_data, t, n_samples):
+        """批量添加噪声 - 保持噪声连续性"""
+        dt = 1.0 / self.sampling_rate
+        
         for ch_name, signal in eeg_data.items():
-            total_noise = np.zeros(len(t))
+            # 初始化该通道的噪声状态
+            if ch_name not in self._noise_states:
+                self._noise_states[ch_name] = {}
+            
+            total_noise = np.zeros(n_samples)
             for noise_config in self.noise_configs:
-                noise = self.signal_engine.generate_noise(noise_config, len(t))
+                noise_type = noise_config.get('type', 'white')
+                
+                # 为该噪声类型初始化状态
+                if noise_type not in self._noise_states[ch_name]:
+                    self._noise_states[ch_name][noise_type] = {}
+                
+                noise_state = self._noise_states[ch_name][noise_type]
+                
+                # 使用连续噪声生成
+                noise = self.signal_engine.generate_continuous_noise(
+                    noise_config, n_samples, dt, noise_state
+                )
                 total_noise += noise
+            
             # 噪声单位是 μV，需要转换为 V（因为 eeg_data 是 V 级别）
             eeg_data[ch_name] = signal + total_noise * 1e-6
         return eeg_data
