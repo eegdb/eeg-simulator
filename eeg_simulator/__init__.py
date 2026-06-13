@@ -7,7 +7,7 @@
 - 实时信号仿真和可视化
 
 使用方式:
-    python -m eegs
+    python -m eeg_simulator
 """
 
 __version__ = '0.1.0'

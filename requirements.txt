@@ -5,7 +5,6 @@ mne>=1.0.0
 pyqtgraph>=0.13.0
 matplotlib>=3.5.0
 nibabel==5.4.0
-pyedflib===0.1.42
-# 测试依赖（可选）
-# pytest>=7.0.0
-# pytest-cov>=4.0.0
+pyedflib==0.1.42
+# 测试依赖
+pytest>=7.0.0

@@ -8,6 +8,11 @@ riderModule.iml
 /__pycache__/
 *.pyc
 .VSCodeCounter
+.DS_Store
+*.textClipping
 # 日志文件
 logs/
 *.log
+# 测试生成的图片
+tests/noise_plots/
+tests/test_noise_continuity/plots/

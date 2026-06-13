@@ -81,20 +81,20 @@ class LoggerManager:
     
     def _setup_log_dir(self):
         """设置日志目录"""
-        # 获取项目根目录（包含 eegs 模块的父目录）
+        # 获取项目根目录（包含 eeg_simulator 模块的父目录）
         current_file = Path(__file__).resolve()
         project_root = current_file.parent.parent.parent
         
         self.log_dir = project_root / 'logs'
         self.log_dir.mkdir(exist_ok=True)
         
-        # 日志文件名：eegs_YYYYMMDD.log
+        # 日志文件名：eeg_simulator_YYYYMMDD.log
         today = datetime.datetime.now().strftime('%Y%m%d')
-        self.log_file = self.log_dir / f'eegs_{today}.log'
+        self.log_file = self.log_dir / f'eeg_simulator_{today}.log'
     
     def _setup_root_logger(self):
         """配置根日志器"""
-        self.root_logger = logging.getLogger('eegs')
+        self.root_logger = logging.getLogger('eeg_simulator')
         self.root_logger.setLevel(logging.DEBUG)
         
         # 避免重复添加handler
@@ -143,7 +143,7 @@ class LoggerManager:
         Returns:
             logging.Logger: 配置好的日志器
         """
-        return logging.getLogger(f'eegs.{name}')
+        return logging.getLogger(f'eeg_simulator.{name}')
     
     def set_level(self, level):
         """设置日志级别

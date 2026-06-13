@@ -260,8 +260,8 @@ class ProjectManager:
         for coupling_id, c in couplings.items():
             serialized.append({
                 "id": coupling_id,
-                "source_id": c.source_dipole_id,
-                "target_id": c.target_dipole_id,
+                "source_id": c.source_patch_id,
+                "target_id": c.target_patch_id,
                 "type": c.type,
                 "strength": ProjectManager._convert_to_json_serializable(c.strength),
                 "delay": ProjectManager._convert_to_json_serializable(c.delay)

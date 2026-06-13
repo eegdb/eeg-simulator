@@ -30,12 +30,11 @@ An EEG signal simulation platform based on **PyQt6** and **MNE-Python**, support
 
 ```
 EEG_Simulation/
-├── eegs/                          # Main package
+├── eeg_simulator/                 # Main package
 │   ├── core/                      # Simulation core
 │   │   ├── simulator_nav.py       # Main simulator (NavigationView layout)
 │   │   ├── signal_engine.py       # Signal generation engine
-│   │   ├── mne_simulator.py       # MNE integration simulator
-│   │   └── simulator.py           # Base simulator
+│   │   └── mne_simulator.py       # MNE integration simulator
 │   ├── models/                    # Data models
 │   │   ├── patch.py               # Patch model (dipole group management)
 │   │   ├── coupling.py            # Coupling models
@@ -101,7 +100,7 @@ python -c "import mne; mne.datasets.sample.data_path()"
 python main.py
 
 # Method 2: Using module
-python -m eegs
+python -m eeg_simulator
 ```
 
 ---
@@ -154,7 +153,7 @@ python -m eegs
 - Supports multiple waveform types: sine, ERP, Gaussian, Gamma oscillation, etc.
 
 ```python
-from eegs.models import Patch
+from eeg_simulator.models import Patch
 
 # Create Patch
 patch = Patch(
@@ -203,6 +202,112 @@ The system supports multiple noise types and allows stacking multiple noise inst
 | **EOG** | Electrooculogram artifacts | Amplitude, Cutoff frequency, Blink rate |
 | **EMG** | Electromyogram artifacts | Amplitude, Cutoff frequency |
 | **ECG** | Electrocardiogram artifacts | Amplitude, Heart rate (BPM) |
+
+#### Physiological Noise Details
+
+**ECG (Electrocardiogram Artifacts)**
+- Simulates ECG waveforms including P wave, QRS complex, and T wave
+- Uses a simplified physiological model to generate periodic heartbeat signals based on heart rate
+- Typical amplitude: 20-50 μV
+- Suitable for simulating cardiac interference in EEG
+
+**EOG (Electrooculogram Artifacts)**
+- Simulates low-frequency transient interference from eye blinks and movements
+- Blink waveform: biphasic pulse with rapid rise and slow decay
+- Configurable blink rate (default 0.5 Hz, approximately one blink every 2 seconds)
+- Includes slow eye movement baseline drift (0.1-0.5 Hz)
+- Typical amplitude: 50-200 μV (blink artifacts are typically strong)
+
+**EMG (Electromyogram Artifacts)**
+- Simulates high-frequency, non-periodic noise from muscle activity
+- Multi-band synthesis: 10-30 Hz (large motor units), 30-100 Hz (primary energy), 100-200 Hz (fast motor units)
+- Simulates burst activity (muscle contraction periods)
+- Typical amplitude: 10-30 μV
+
+### Noise Spectral Characteristics
+
+| Noise Type | Power Spectral Density | Spectral Feature | Generation Method |
+|-----------|----------------------|-----------------|------------------|
+| **White** | $P(f) = C$ | Flat spectrum | Pure random sequence |
+| **Pink** | $P(f) = C/f$ | 1/f decay | Integration of white noise |
+| **Brown** | $P(f) = C/f^2$ | 1/f² decay | Double integration of white noise |
+| **1/f** | $P(f) = C/f^\alpha$ | Adjustable α decay | Fractional integration filter |
+
+#### White Noise
+
+**Spectral Feature**: **Flat** - Equal energy at all frequencies
+
+| Property | Description |
+|----------|-------------|
+| **Physical Meaning** | Like white light containing all colors, equal energy at all frequencies |
+| **Sounds Like** | Hissing sound, like TV static |
+| **EEG Relevance** | Simulates electronic thermal noise, quantization noise |
+
+**FFT Plot**: Approximately horizontal line
+
+#### Pink Noise
+
+**Spectral Feature**: **1/f decay** - Equal energy per octave
+
+| Property | Description |
+|----------|-------------|
+| **Physical Meaning** | High energy at low frequencies, low at high, decaying as 1/f |
+| **Sounds Like** | "Softer", like wind or flowing water |
+| **EEG Relevance** | Close to real EEG background (EEG exhibits 1/f characteristics) |
+
+**Energy Distribution**:
+- 1-2 Hz: Energy = 1
+- 2-4 Hz: Energy = 0.5 (same total as 1-2Hz band)
+- 4-8 Hz: Energy = 0.25
+
+**FFT Plot**: Monotonically decreasing left to right (slope ~ -10 dB/octave)
+
+#### Brown Noise
+
+**Spectral Feature**: **1/f² decay** - Low frequencies absolutely dominant
+
+| Property | Description |
+|----------|-------------|
+| **Physical Meaning** | Faster decay than pink noise, random walk characteristics |
+| **Sounds Like** | Deep rumbling sound |
+| **EEG Relevance** | Simulates electrode polarization drift, slow baseline wander |
+
+**Comparison with White Noise**:
+- White: Adjacent samples independent
+- Brown: Strong correlation (random walk)
+
+**FFT Plot**: Steep decrease (slope ~ -20 dB/octave)
+
+#### 1/f Noise (Fractional)
+
+**Spectral Feature**: **1/f^α decay** (adjustable α, 0 ≤ α ≤ 2)
+
+| α Value | Noise Type | Spectral Slope |
+|---------|-----------|----------------|
+| 0 | White | 0 dB/octave |
+| 0.5 | Intermediate | -5 dB/octave |
+| 1.0 | Pink | -10 dB/octave |
+| 1.5 | Intermediate | -15 dB/octave |
+| 2.0 | Brown | -20 dB/octave |
+
+**Usage**: Fine-tune background noise spectral characteristics as needed
+
+#### Spectral Comparison Diagram
+
+```
+Amplitude (dB)
+  |
+0 |    White  ─────────────────────────
+  |    Pink   ─────╲
+  |    1/f (α=1.5) ──────╲
+  |    Brown  ───────────╲
+-20|                       ╲
+  |                         ╲
+-40|                           ╲_____
+  |
+  +------------------------------------
+     1Hz   10Hz   100Hz   1000Hz   Frequency
+```
 
 ### Usage
 
@@ -260,7 +365,17 @@ python tests/run_tests.py
 
 # Compare with MNE simulation results
 python tests/test_compare_mne.py
+
+# Generate noise waveform visualization
+python tests/test_noise_visualization.py
 ```
+
+### Noise Visualization Test
+
+Run `test_noise_visualization.py` to generate waveform and spectrum comparison plots for all noise types:
+
+- **Noise Overview** (`tests/noise_plots/noise_overview.png`): Time-domain waveforms + spectrum comparison for 8 noise types
+- **Physiological Noise Details** (`tests/noise_plots/noise_detailed_detailed.png`): Parameter variation comparison for ECG/EOG/EMG
 
 ---
 

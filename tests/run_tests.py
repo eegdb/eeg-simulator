@@ -8,7 +8,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 导入测试模块
-from tests.test_models import TestDipoleDefinition, TestSignalGenerator, TestCouplingModel
+from tests.test_models import TestDipole, TestSignalGenerator, TestCouplingModel
 from tests.test_utils import TestTranslator, TestConfigManager
 from tests.test_signal_engine import TestSignalEngine
 
@@ -20,7 +20,7 @@ def run_all_tests():
     suite = unittest.TestSuite()
     
     # 添加测试类
-    suite.addTests(loader.loadTestsFromTestCase(TestDipoleDefinition))
+    suite.addTests(loader.loadTestsFromTestCase(TestDipole))
     suite.addTests(loader.loadTestsFromTestCase(TestSignalGenerator))
     suite.addTests(loader.loadTestsFromTestCase(TestCouplingModel))
     suite.addTests(loader.loadTestsFromTestCase(TestTranslator))

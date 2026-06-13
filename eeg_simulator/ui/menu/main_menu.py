@@ -338,7 +338,7 @@ class MainMenuBar(QMenuBar):
     def _on_docs(self):
         """打开文档"""
         import webbrowser
-        webbrowser.open("https://github.com/your-repo/eegs")
+        webbrowser.open("https://github.com/eegdb/eeg-simulator")
     
     def _on_about(self):
         """关于对话框"""

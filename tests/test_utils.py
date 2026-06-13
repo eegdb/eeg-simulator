@@ -126,7 +126,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config.get('theme'), 'light')
         
         # 重新加载验证是否保存
-        config_module = sys.modules['eegs.utils.config_manager']
+        import eeg_simulator.utils.config_manager as config_module
         config_module._config_instance = None
         config2 = ConfigManager()
         self.assertEqual(config2.get('theme'), 'light')

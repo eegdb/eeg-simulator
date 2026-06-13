@@ -9,6 +9,7 @@ tests/
 ├── test_models.py           # 模型类测试
 ├── test_utils.py            # 工具模块测试
 ├── test_signal_engine.py    # 信号引擎测试
+├── test_noise_continuity/   # 噪声连续性测试
 └── README.md                # 本文档
 ```
 
@@ -32,26 +33,26 @@ python -m unittest tests.test_utils -v
 python -m unittest tests.test_signal_engine -v
 
 # 运行单个测试类
-python -m unittest tests.test_models.TestDipoleDefinition -v
+python -m unittest tests.test_models.TestDipole -v
 ```
 
-### 方法3：使用 pytest（需要安装 pytest）
+### 方法3：使用 pytest
 
 ```bash
-# 安装 pytest
-pip install pytest pytest-cov
+# 安装依赖（含 pytest）
+pip install -r requirements.txt
 
 # 运行所有测试
 pytest tests/ -v
 
 # 运行并生成覆盖率报告
-pytest tests/ -v --cov=eegs --cov-report=html
+pytest tests/ -v --cov=eeg_simulator --cov-report=html
 ```
 
 ## 测试覆盖范围
 
 ### test_models.py
-- `DipoleDefinition`: 偶极子定义模型
+- `Dipole`: 偶极子定义模型
   - 初始化测试
   - 方向向量归一化测试
   - 可选属性测试
@@ -59,46 +60,17 @@ pytest tests/ -v --cov=eegs --cov-report=html
 - `SignalGenerator`: 信号生成器模型
   - 各种信号类型初始化测试
   - 参数更新测试
-  
+
 - `CouplingModel`: 耦合模型
-  - 线性和非线性耦合测试
-  - 参数修改测试
+  - 线性/非线性/延迟耦合测试
 
 ### test_utils.py
 - `Translator`: 国际化翻译
-  - 语言设置测试
-  - 翻译功能测试
-  
-- `ConfigManager`: 配置管理
-  - 默认配置加载
-  - 配置读写测试
-  - 主题和语言设置测试
+- `ConfigManager`: 配置管理（SQLite）
 
 ### test_signal_engine.py
-- `SignalEngine`: 信号引擎
-  - 各种信号类型生成测试（正弦、方波、锯齿波、噪声等）
-  - 信号参数测试（振幅、频率、相位）
+- `SignalEngine`: 信号生成引擎
+  - 各种波形生成测试
 
-## 添加新测试
-
-1. 在对应的测试文件中添加测试类或方法
-2. 测试方法名必须以 `test_` 开头
-3. 使用 `unittest.TestCase` 的断言方法
-
-示例：
-
-```python
-class TestNewFeature(unittest.TestCase):
-    def setUp(self):
-        """测试前准备"""
-        pass
-    
-    def tearDown(self):
-        """测试后清理"""
-        pass
-    
-    def test_something(self):
-        """测试某个功能"""
-        result = some_function()
-        self.assertEqual(result, expected_value)
-```
+### test_noise_continuity/
+- 各类噪声的批次连续性测试

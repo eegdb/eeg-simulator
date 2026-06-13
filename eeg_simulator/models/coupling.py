@@ -48,16 +48,15 @@ class CouplingModel:
         self.strength = strength
         self.delay = delay
         self.sampling_rate = sampling_rate
+        self._history: Optional[np.ndarray] = None
+        self._write_idx = 0
         self._update_delay_samples()
-        
-        # 用于延迟耦合的信号缓冲区
-        self._signal_buffer: Dict[str, np.ndarray] = {}
-        self._buffer_size = 10000  # 足够大的缓冲区
-        self._buffer_index = 0
         
     def _update_delay_samples(self):
         """根据延迟时间和采样率计算延迟采样数"""
         self.delay_samples = int(self.delay * self.sampling_rate)
+        self._history = None
+        self._write_idx = 0
         
     def set_sampling_rate(self, sampling_rate: float):
         """更新采样率，重新计算延迟采样数"""
@@ -91,6 +90,13 @@ class CouplingModel:
             
         return target_signal
     
+    def _ensure_history_buffer(self):
+        """初始化或调整延迟耦合的历史缓冲区"""
+        size = max(self.delay_samples + 1, 2)
+        if self._history is None or len(self._history) != size:
+            self._history = np.zeros(size)
+            self._write_idx = 0
+
     def _get_delayed_signal(self, source_signal: float) -> float:
         """获取延迟后的源信号
         
@@ -100,9 +106,17 @@ class CouplingModel:
         Returns:
             float: 延迟后的信号值
         """
-        # 简化处理：直接返回当前信号（实际实现需要维护历史缓冲区）
-        # TODO: 实现真正的延迟缓冲区
-        return source_signal
+        if self.delay_samples <= 0:
+            return source_signal
+
+        self._ensure_history_buffer()
+        read_idx = (self._write_idx - self.delay_samples) % len(self._history)
+        delayed = float(self._history[read_idx])
+
+        self._history[self._write_idx] = source_signal
+        self._write_idx = (self._write_idx + 1) % len(self._history)
+
+        return delayed
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典"""

@@ -140,8 +140,6 @@ def test_line_noise_continuity(
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
         print(f"\n图片已保存: {save_path}")
-    else:
-        plt.show()
     
     plt.close()
     
