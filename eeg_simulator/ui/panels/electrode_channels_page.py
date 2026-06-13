@@ -366,6 +366,12 @@ class ElectrodeChannelsPage(NavigationPage):
         self.channels_group.setTitle(tr('label_channels'))
         self.selected_group.setTitle(tr('selected_channels'))
         
+        # 更新说明文字
+        self.info_label.setText(tr('channels_info'))
+        
+        # 更新头部布局选择器
+        self.head_selector.update_texts()
+        
         # 更新按钮文本
         self.select_all_btn.setText(tr('btn_select_all'))
         self.clear_btn.setText(tr('btn_clear'))

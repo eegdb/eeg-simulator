@@ -51,7 +51,8 @@ class OutputPage(NavigationPage):
         sr_layout = QVBoxLayout(self.sr_group)
         
         sr_input_layout = QHBoxLayout()
-        sr_input_layout.addWidget(QLabel(tr('label_sampling_rate')))
+        self.sr_label = QLabel(tr('label_sampling_rate'))
+        sr_input_layout.addWidget(self.sr_label)
         
         self.sr_spin = QDoubleSpinBox()
         self.sr_spin.setRange(100, 10000)
@@ -89,7 +90,8 @@ class OutputPage(NavigationPage):
         duration_layout = QVBoxLayout(self.duration_group)
         
         duration_input_layout = QHBoxLayout()
-        duration_input_layout.addWidget(QLabel(tr('label_output_duration')))
+        self.duration_label = QLabel(tr('label_output_duration'))
+        duration_input_layout.addWidget(self.duration_label)
         
         self.duration_spin = QDoubleSpinBox()
         self.duration_spin.setRange(0, 3600)
@@ -164,7 +166,8 @@ class OutputPage(NavigationPage):
             
             # 文件名
             name_layout = QHBoxLayout()
-            name_layout.addWidget(QLabel(tr('label_filename')))
+            self.filename_label = QLabel(tr('label_filename'))
+            name_layout.addWidget(self.filename_label)
             self.filename_input = QLineEdit()
             self.filename_input.setPlaceholderText(tr('placeholder_filename'))
             name_layout.addWidget(self.filename_input)
@@ -176,7 +179,8 @@ class OutputPage(NavigationPage):
         elif output_format == 'lsl':
             # LSL输出配置
             lsl_layout = QVBoxLayout()
-            lsl_layout.addWidget(QLabel(tr('label_device_name')))
+            self.device_name_label = QLabel(tr('label_device_name'))
+            lsl_layout.addWidget(self.device_name_label)
             
             self.device_name_input = QLineEdit()
             self.device_name_input.setPlaceholderText(tr('placeholder_device_name'))
@@ -354,6 +358,11 @@ class OutputPage(NavigationPage):
         self.duration_group.setTitle(tr('label_output_duration'))
         self.control_group.setTitle(tr('simulation_control'))
         
+        # 更新内联标签
+        self.sr_label.setText(tr('label_sampling_rate'))
+        self.duration_label.setText(tr('label_output_duration'))
+        self.duration_spin.setSpecialValueText(tr('duration_infinite'))
+        
         # 更新按钮文本
         if self.parent_simulator.is_running:
             self.sim_control_btn.setText(tr('btn_stop_sim'))
@@ -362,9 +371,21 @@ class OutputPage(NavigationPage):
         # 仅在按钮存在时更新（文件输出模式下）
         if hasattr(self, 'select_dir_btn'):
             self.select_dir_btn.setText(tr('btn_select_dir'))
+        if hasattr(self, 'filename_label'):
+            self.filename_label.setText(tr('label_filename'))
+        if hasattr(self, 'filename_input'):
+            self.filename_input.setPlaceholderText(tr('placeholder_filename'))
+        if hasattr(self, 'device_name_label'):
+            self.device_name_label.setText(tr('label_device_name'))
+        if hasattr(self, 'device_name_input'):
+            self.device_name_input.setPlaceholderText(tr('placeholder_device_name'))
+        if hasattr(self, 'output_dir_label') and not self.output_dir:
+            self.output_dir_label.setText(tr('output_dir_not_set'))
         
         # 更新状态标签
         if self.parent_simulator.is_running:
             self.status_label.setText(tr('status_running'))
+        elif self.parent_simulator.simulation_time > 0:
+            self.status_label.setText(tr('status_stopped'))
         else:
             self.status_label.setText(tr('status_ready'))

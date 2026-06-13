@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QDoubleSpinBox)
 
 from ..styles import COLORS
+from ...utils import tr
 
 
 class SourceCard(QFrame):
@@ -29,7 +30,7 @@ class SourceCard(QFrame):
         
         # 频率
         v1 = QVBoxLayout()
-        v1.addWidget(QLabel("频率 (Hz)", objectName="SubTitle"))
+        v1.addWidget(QLabel(tr('label_frequency'), objectName="SubTitle"))
         self.freq_spin = QDoubleSpinBox()
         self.freq_spin.setRange(0.1, 1000)
         self.freq_spin.setValue(freq)
@@ -38,7 +39,7 @@ class SourceCard(QFrame):
 
         # 振幅
         v2 = QVBoxLayout()
-        v2.addWidget(QLabel("振幅", objectName="SubTitle"))
+        v2.addWidget(QLabel(tr('label_amplitude'), objectName="SubTitle"))
         self.amp_spin = QDoubleSpinBox()
         self.amp_spin.setRange(0, 10000)
         self.amp_spin.setValue(amp)

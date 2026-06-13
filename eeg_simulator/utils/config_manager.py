@@ -11,7 +11,7 @@ class ConfigManager:
     
     # 默认配置
     DEFAULT_CONFIG = {
-        'language': 'zh_CN',
+        'language': 'en',
         'theme': 'dark',  # 'dark' 或 'light'
         'dark_mode': True,
         'animations': True,
@@ -162,7 +162,7 @@ class ConfigManager:
     
     def get_language(self):
         """获取当前语言"""
-        return self.get('language', 'zh_CN')
+        return self.get('language', 'en')
     
     def set_language(self, lang):
         """设置语言"""

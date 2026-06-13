@@ -21,7 +21,7 @@ class TestTranslator(unittest.TestCase):
 
     def test_default_language(self):
         """测试默认语言"""
-        self.assertEqual(self.translator.get_language(), 'zh_CN')
+        self.assertEqual(self.translator.get_language(), 'en')
 
     def test_set_language(self):
         """测试设置语言"""
@@ -33,7 +33,7 @@ class TestTranslator(unittest.TestCase):
         """测试设置无效语言"""
         result = self.translator.set_language('invalid_lang')
         self.assertFalse(result)
-        self.assertEqual(self.translator.get_language(), 'zh_CN')  # 保持原语言
+        self.assertEqual(self.translator.get_language(), 'en')  # 保持原语言
 
     def test_translate_zh_cn(self):
         """测试中文翻译"""
@@ -102,7 +102,7 @@ class TestConfigManager(unittest.TestCase):
         """测试加载默认配置"""
         config = ConfigManager()
         
-        self.assertEqual(config.get('language'), 'zh_CN')
+        self.assertEqual(config.get('language'), 'en')
         self.assertEqual(config.get('theme'), 'dark')
         self.assertEqual(config.get('default_sampling_rate'), 1000)
 
@@ -186,7 +186,7 @@ class TestConfigManager(unittest.TestCase):
         
         # 验证恢复默认值
         self.assertEqual(config.get('theme'), 'dark')
-        self.assertEqual(config.get('language'), 'zh_CN')
+        self.assertEqual(config.get('language'), 'en')
 
 
 if __name__ == '__main__':

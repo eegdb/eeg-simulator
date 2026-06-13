@@ -132,7 +132,8 @@ class SourceConfigPage(NavigationPage):
         
         # 脑组织
         brain_layout = QHBoxLayout()
-        brain_layout.addWidget(QLabel(f"{tr('bem_conductivity_brain')} (S/m):"))
+        self.brain_cond_label = QLabel(f"{tr('bem_conductivity_brain')} (S/m):")
+        brain_layout.addWidget(self.brain_cond_label)
         self.brain_cond_spin = QDoubleSpinBox()
         self.brain_cond_spin.setRange(0.1, 2.0)
         self.brain_cond_spin.setDecimals(3)
@@ -142,7 +143,8 @@ class SourceConfigPage(NavigationPage):
         
         # 颅骨
         skull_layout = QHBoxLayout()
-        skull_layout.addWidget(QLabel(f"{tr('bem_conductivity_skull')} (S/m):"))
+        self.skull_cond_label = QLabel(f"{tr('bem_conductivity_skull')} (S/m):")
+        skull_layout.addWidget(self.skull_cond_label)
         self.skull_cond_spin = QDoubleSpinBox()
         self.skull_cond_spin.setRange(0.001, 0.1)
         self.skull_cond_spin.setDecimals(4)
@@ -152,7 +154,8 @@ class SourceConfigPage(NavigationPage):
         
         # 头皮
         scalp_layout = QHBoxLayout()
-        scalp_layout.addWidget(QLabel(f"{tr('bem_conductivity_scalp')} (S/m):"))
+        self.scalp_cond_label = QLabel(f"{tr('bem_conductivity_scalp')} (S/m):")
+        scalp_layout.addWidget(self.scalp_cond_label)
         self.scalp_cond_spin = QDoubleSpinBox()
         self.scalp_cond_spin.setRange(0.1, 2.0)
         self.scalp_cond_spin.setDecimals(3)
@@ -472,7 +475,7 @@ class SourceConfigPage(NavigationPage):
     def _get_src_info_text(self, src):
         """获取源空间信息文本"""
         total = sum(s['nuse'] for s in src)
-        lines = [f"总源点数: {total}"]
+        lines = [tr('src_total_vertices', total)]
         for i, s in enumerate(src):
             if s['type'] == 'surf':
                 hemi = tr('label_left') if i == 0 else tr('label_right')
@@ -680,12 +683,23 @@ class SourceConfigPage(NavigationPage):
         self.noise_group.setTitle(tr('noise_settings'))
         self.coupling_group.setTitle(tr('panel_coupling'))
         
+        # 更新 BEM 标签
+        self.brain_cond_label.setText(f"{tr('bem_conductivity_brain')} (S/m):")
+        self.skull_cond_label.setText(f"{tr('bem_conductivity_skull')} (S/m):")
+        self.scalp_cond_label.setText(f"{tr('bem_conductivity_scalp')} (S/m):")
+        
         # 更新按钮文本
         self.sample_btn.setText(tr('btn_load_sample'))
         self.patch_btn.setText(tr('btn_manage_patches'))
         self.make_bem_btn.setText(tr('bem_make_model'))
         self.manage_noise_btn.setText(tr('btn_manage_noise'))
         self.manage_coupling_btn.setText(tr('btn_manage_coupling'))
+        
+        # 更新源空间信息
+        if self.loaded_src:
+            self.src_info_label.setText(self._get_src_info_text(self.loaded_src))
+        else:
+            self.src_info_label.setText(tr('not_loaded'))
         
         # 更新统计信息
         self._update_patch_stats()

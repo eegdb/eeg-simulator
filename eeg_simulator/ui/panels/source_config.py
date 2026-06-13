@@ -613,7 +613,7 @@ class SourceConfigPanel(QWidget):
     def _get_src_info_text(self, src, subject):
         """获取源空间信息文本"""
         total = sum(s['nuse'] for s in src)
-        lines = [f"总源点数: {total}"]
+        lines = [tr('src_total_vertices', total)]
 
         for i, s in enumerate(src):
             if s['type'] == 'surf':

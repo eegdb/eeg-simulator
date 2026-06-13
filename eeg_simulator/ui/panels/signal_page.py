@@ -89,11 +89,12 @@ class SignalPage(NavigationPage):
         layout = self.get_content_layout()
         
         # ========== 滤波参数设置 ==========
-        filter_group = QGroupBox(tr('filter_settings'))
-        filter_layout = QHBoxLayout(filter_group)
+        self.filter_group = QGroupBox(tr('filter_settings'))
+        filter_layout = QHBoxLayout(self.filter_group)
         
         # 高通滤波
-        filter_layout.addWidget(QLabel(tr('label_highpass')))
+        self.highpass_label = QLabel(tr('label_highpass'))
+        filter_layout.addWidget(self.highpass_label)
         self.highpass_spin = QDoubleSpinBox()
         self.highpass_spin.setRange(0, 100)
         self.highpass_spin.setValue(0.5)
@@ -102,7 +103,8 @@ class SignalPage(NavigationPage):
         filter_layout.addWidget(self.highpass_spin)
         
         # 低通滤波
-        filter_layout.addWidget(QLabel(tr('label_lowpass')))
+        self.lowpass_label = QLabel(tr('label_lowpass'))
+        filter_layout.addWidget(self.lowpass_label)
         self.lowpass_spin = QDoubleSpinBox()
         self.lowpass_spin.setRange(0, 500)
         self.lowpass_spin.setValue(100)
@@ -118,7 +120,8 @@ class SignalPage(NavigationPage):
         filter_layout.addStretch()
         
         # 时间窗口
-        filter_layout.addWidget(QLabel(tr('label_time_window')))
+        self.time_window_label = QLabel(tr('label_time_window'))
+        filter_layout.addWidget(self.time_window_label)
         self.time_window_spin = QDoubleSpinBox()
         self.time_window_spin.setRange(1, 60)
         self.time_window_spin.setValue(10)
@@ -126,7 +129,7 @@ class SignalPage(NavigationPage):
         self.time_window_spin.setDecimals(0)
         filter_layout.addWidget(self.time_window_spin)
         
-        layout.addWidget(filter_group)
+        layout.addWidget(self.filter_group)
         
         # 连接滤波参数改变信号
         self.highpass_spin.valueChanged.connect(self.filter_changed.emit)
@@ -168,17 +171,18 @@ class SignalPage(NavigationPage):
         right_layout.addWidget(self.heatmap_group)
         
         # FFT 频谱图
-        fft_group = QGroupBox("FFT Spectrum")
-        fft_group.setFixedWidth(270)
-        fft_layout = QVBoxLayout(fft_group)
+        self.fft_group = QGroupBox(tr('label_fft_spectrum'))
+        self.fft_group.setFixedWidth(270)
+        fft_layout = QVBoxLayout(self.fft_group)
         fft_layout.setContentsMargins(4, 4, 4, 4)
         fft_layout.setSpacing(4)
         
         # FFT 导联选择
         fft_select_layout = QHBoxLayout()
-        fft_select_layout.addWidget(QLabel("Channel:"))
+        self.fft_channel_label = QLabel(tr('label_fft_channel'))
+        fft_select_layout.addWidget(self.fft_channel_label)
         self.fft_channel_combo = QComboBox()
-        self.fft_channel_combo.setToolTip("Select channel for FFT analysis")
+        self.fft_channel_combo.setToolTip(tr('tooltip_fft_channel'))
         fft_select_layout.addWidget(self.fft_channel_combo, 1)
         fft_layout.addLayout(fft_select_layout)
         
@@ -187,13 +191,13 @@ class SignalPage(NavigationPage):
         self.fft_plot.setBackground(get_color('bg_card'))
         self.fft_plot.setMinimumHeight(150)
         self.fft_plot.setMaximumHeight(200)
-        self.fft_plot.setLabel('bottom', 'Frequency (Hz)')
-        self.fft_plot.setLabel('left', 'Power')
+        self.fft_plot.setLabel('bottom', tr('label_frequency'))
+        self.fft_plot.setLabel('left', tr('label_power'))
         self.fft_plot.showGrid(x=True, y=True, alpha=0.3)
         self.fft_curve = self.fft_plot.plot(pen=pg.mkPen(color=get_color('accent'), width=2))
         fft_layout.addWidget(self.fft_plot)
         
-        right_layout.addWidget(fft_group, 1)
+        right_layout.addWidget(self.fft_group, 1)
         viz_splitter.addWidget(right_panel)
         # 设置分割器拉伸因子：左侧可伸缩，右侧固定
         viz_splitter.setStretchFactor(0, 1)  # 左侧（信号图）可伸缩
@@ -386,5 +390,19 @@ class SignalPage(NavigationPage):
         self.set_subtitle(tr('nav_signal_subtitle'))
         
         # 更新组标题
+        self.filter_group.setTitle(tr('filter_settings'))
         self.viz_group.setTitle(tr('panel_realtime_signal'))
         self.heatmap_group.setTitle(tr('panel_head_layout'))
+        self.fft_group.setTitle(tr('label_fft_spectrum'))
+        
+        # 更新滤波标签
+        self.highpass_label.setText(tr('label_highpass'))
+        self.lowpass_label.setText(tr('label_lowpass'))
+        self.notch_cb.setText(tr('label_notch_filter'))
+        self.time_window_label.setText(tr('label_time_window'))
+        
+        # 更新 FFT 标签
+        self.fft_channel_label.setText(tr('label_fft_channel'))
+        self.fft_channel_combo.setToolTip(tr('tooltip_fft_channel'))
+        self.fft_plot.setLabel('bottom', tr('label_frequency'))
+        self.fft_plot.setLabel('left', tr('label_power'))

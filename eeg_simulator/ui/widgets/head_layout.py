@@ -325,30 +325,51 @@ class HeatmapOverlayWidget(QWidget):
 class HeadLayoutWidget(QWidget):
     """头部电极布局预览组件 - 使用 MNE 内置 plot"""
 
-    # 常用 MNE 内置 montages
-    BUILTIN_MONTAGES = {
-        'standard_1020': '10-20 系统 (19通道)',
-        'standard_1005': '10-10 系统 (85通道)',
-        'standard_alphabetic': '字母顺序',
-        'biosemi16': 'Biosemi 16通道',
-        'biosemi32': 'Biosemi 32通道',
-        'biosemi64': 'Biosemi 64通道',
-        'biosemi128': 'Biosemi 128通道',
-        'biosemi160': 'Biosemi 160通道',
-        'biosemi256': 'Biosemi 256通道',
-        'easycap-M1': 'Easycap M1 (64通道)',
-        'easycap-M10': 'Easycap M10 (61通道)',
-        'EGI_256': 'EGI 256通道',
-        'GSN-HydroCel-32': 'HydroCel 32通道',
-        'GSN-HydroCel-64_1.0': 'HydroCel 64通道',
-        'GSN-HydroCel-128': 'HydroCel 128通道',
-        'GSN-HydroCel-256': 'HydroCel 256通道',
-        'mgh60': 'MGH 60通道',
-        'mgh70': 'MGH 70通道',
+    # 常用 MNE 内置 montages（key -> i18n key）
+    BUILTIN_MONTAGE_KEYS = [
+        'standard_1020', 'standard_1005', 'standard_alphabetic',
+        'biosemi16', 'biosemi32', 'biosemi64', 'biosemi128', 'biosemi160', 'biosemi256',
+        'easycap-M1', 'easycap-M10', 'EGI_256',
+        'GSN-HydroCel-32', 'GSN-HydroCel-64_1.0', 'GSN-HydroCel-128', 'GSN-HydroCel-256',
+        'mgh60', 'mgh70', 'artinis-octamon', 'artinis-brite23',
+        'brainproducts-RNP-BA-128',
+    ]
+
+    MONTAGE_I18N_KEYS = {
+        'standard_1020': 'montage_standard_1020',
+        'standard_1005': 'montage_standard_1005',
+        'standard_alphabetic': 'montage_standard_alphabetic',
+        'biosemi16': 'montage_biosemi16',
+        'biosemi32': 'montage_biosemi32',
+        'biosemi64': 'montage_biosemi64',
+        'biosemi128': 'montage_biosemi128',
+        'biosemi160': 'montage_biosemi160',
+        'biosemi256': 'montage_biosemi256',
+        'easycap-M1': 'montage_easycap_M1',
+        'easycap-M10': 'montage_easycap_M10',
+        'EGI_256': 'montage_EGI_256',
+        'GSN-HydroCel-32': 'montage_GSN_HydroCel_32',
+        'GSN-HydroCel-64_1.0': 'montage_GSN_HydroCel_64_1_0',
+        'GSN-HydroCel-128': 'montage_GSN_HydroCel_128',
+        'GSN-HydroCel-256': 'montage_GSN_HydroCel_256',
+        'mgh60': 'montage_mgh60',
+        'mgh70': 'montage_mgh70',
         'artinis-octamon': 'Artinis Octamon',
         'artinis-brite23': 'Artinis Brite23',
-        'brainproducts-RNP-BA-128': 'BrainProducts 128通道',
+        'brainproducts-RNP-BA-128': 'montage_brainproducts_RNP_BA_128',
     }
+
+    @classmethod
+    def montage_display_name(cls, key):
+        """获取 montage 的本地化显示名称"""
+        i18n_key = cls.MONTAGE_I18N_KEYS.get(key, key)
+        if i18n_key.startswith('montage_'):
+            return tr(i18n_key)
+        return i18n_key
+
+    def get_available_montages(self):
+        """获取所有可用布局名称"""
+        return {key: self.montage_display_name(key) for key in self.BUILTIN_MONTAGE_KEYS}
 
     def __init__(self, parent=None, montage_name='standard_1020'):
         super().__init__(parent)
@@ -361,10 +382,6 @@ class HeadLayoutWidget(QWidget):
         
         # 加载初始 montage
         self.set_montage(montage_name)
-
-    def get_available_montages(self):
-        """获取所有可用布局名称"""
-        return dict(self.BUILTIN_MONTAGES)
 
     def set_montage(self, montage_name):
         """设置 MNE 内置 montage"""
@@ -483,8 +500,7 @@ class HeadLayoutSelector(QWidget):
         
         # 布局选择下拉框
         self.combo = QComboBox()
-        for key, name in self.head_widget.get_available_montages().items():
-            self.combo.addItem(name, key)
+        self._populate_montage_combo()
         
         self.combo.currentIndexChanged.connect(self._on_selection_changed)
         
@@ -494,7 +510,8 @@ class HeadLayoutSelector(QWidget):
         self.show_labels_cb.stateChanged.connect(self._on_show_labels_changed)
         
         # 添加到布局
-        layout.addWidget(QLabel(tr('label_electrode_layout')))
+        self.layout_label = QLabel(tr('label_electrode_layout'))
+        layout.addWidget(self.layout_label)
         layout.addWidget(self.combo)
         layout.addWidget(self.overlay_container, 1)
         
@@ -526,6 +543,25 @@ class HeadLayoutSelector(QWidget):
     def _on_show_labels_changed(self, state):
         """显示标签选项改变时"""
         self.head_widget.set_show_labels(state == Qt.CheckState.Checked.value)
+    
+    def _populate_montage_combo(self):
+        """填充 montage 下拉框"""
+        current = self.combo.currentData() if self.combo.count() else None
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        for key, name in self.head_widget.get_available_montages().items():
+            self.combo.addItem(name, key)
+        if current:
+            idx = self.combo.findData(current)
+            if idx >= 0:
+                self.combo.setCurrentIndex(idx)
+        self.combo.blockSignals(False)
+
+    def update_texts(self):
+        """更新界面文本（语言切换时调用）"""
+        self.layout_label.setText(tr('label_electrode_layout'))
+        self.show_labels_cb.setText(tr('label_show_labels'))
+        self._populate_montage_combo()
     
     def get_head_widget(self):
         """获取头部组件"""

@@ -120,10 +120,18 @@ python -m eeg_simulator
 - Click **"Load MNE Sample Source Space"** to load sample data
 - Or click **"Load from File"** to load custom `-src.fif` files
 
+<p align="center">
+  <img src="docs/pic/source_cfg.jpg" alt="Source Config page" width="900">
+</p>
+
 #### 2. Select Signal Sources
 - Click **"Select Source Points..."** to open the MRI slice visual selector
 - Click on MRI slices to select individual points (green=left, red=right, yellow star=selected)
 - Or check regions in **"Anatomy Labels"** to batch add all source points in selected regions
+
+<p align="center">
+  <img src="docs/pic/patch.jpg" alt="Patch Manager" width="900">
+</p>
 
 #### 3. Configure Signals
 - **Patch Manager**: Create and manage Patches (adjacent dipole groups)
@@ -138,7 +146,22 @@ python -m eeg_simulator
 #### 5. Start Simulation
 - Set sampling rate (default 1000 Hz)
 - Select EEG channels to display
+
+<p align="center">
+  <img src="docs/pic/channel.jpg" alt="Electrode & Channels page" width="900">
+</p>
+
+- Configure output format and simulation control
+
+<p align="center">
+  <img src="docs/pic/output.jpg" alt="Output Settings page" width="900">
+</p>
+
 - Click **"Start Simulation"** to view real-time waveforms
+
+<p align="center">
+  <img src="docs/pic/realtime.jpg" alt="Real-time Signal page" width="900">
+</p>
 
 ---
 
@@ -187,6 +210,10 @@ Define signal connection relationships between Patches:
 ---
 
 ## 🔊 Noise Management
+
+<p align="center">
+  <img src="docs/pic/noise.jpg" alt="Noise Manager" width="900">
+</p>
 
 The system supports multiple noise types and allows stacking multiple noise instances to simulate various interferences in real EEG environments.
 

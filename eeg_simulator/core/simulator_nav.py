@@ -489,7 +489,7 @@ class EEGSimulator(QMainWindow):
         except Exception as e:
             logger.error(f"仿真更新失败: {e}", exc_info=True)
             self.stop_simulation()
-            QMessageBox.critical(self, tr('error'), f"仿真失败: {str(e)}")
+            QMessageBox.critical(self, tr('error'), tr('msg_simulation_failed', str(e)))
 
     def _generate_patch_signals_batch(self, t, n_samples):
         """批量生成Patch信号 - 保持相位连续性"""
@@ -1464,6 +1464,15 @@ class EEGSimulator(QMainWindow):
         self.electrode_channels_page.update_texts()
         self.signal_page.update_texts()
         self.output_page.update_texts()
+        
+        # 更新状态栏
+        self._update_status_bar()
+        if self.is_running:
+            self.status_run.setText("● " + tr('status_running'))
+        elif self.simulation_time > 0:
+            self.status_run.setText("○ " + tr('status_stopped'))
+        else:
+            self.status_run.setText("○ " + tr('status_ready'))
         
         logger.info(f"语言已切换: {lang}")
     

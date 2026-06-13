@@ -119,10 +119,18 @@ python -m eeg_simulator
 - 点击 **"加载 MNE Sample 源空间"** 加载示例数据
 - 或点击 **"从文件加载源空间"** 加载自定义 `-src.fif` 文件
 
+<p align="center">
+  <img src="docs/pic/source_cfg.jpg" alt="源配置页面" width="900">
+</p>
+
 #### 2. 选择信号源
 - 点击 **"选择源空间点..."** 打开 MRI 切片可视化选择器
 - 在 MRI 切片上点击选择单个点（绿色=左脑，红色=右脑，黄色星形=已选中）
 - 或在 **"解剖学标签"** 中勾选区域，批量添加选中区域的全部源点
+
+<p align="center">
+  <img src="docs/pic/patch.jpg" alt="Patch 管理" width="900">
+</p>
 
 #### 3. 配置信号
 - **Patch 管理**：创建和管理 Patch（相邻偶极子组）
@@ -137,7 +145,22 @@ python -m eeg_simulator
 #### 5. 开始仿真
 - 设置采样率（默认 1000 Hz）
 - 选择要显示的 EEG 通道
+
+<p align="center">
+  <img src="docs/pic/channel.jpg" alt="电极与通道选择" width="900">
+</p>
+
+- 配置输出格式与仿真控制
+
+<p align="center">
+  <img src="docs/pic/output.jpg" alt="输出设置" width="900">
+</p>
+
 - 点击 **"开始仿真"** 查看实时波形
+
+<p align="center">
+  <img src="docs/pic/realtime.jpg" alt="实时信号" width="900">
+</p>
 
 ---
 
@@ -186,6 +209,10 @@ patch = Patch(
 ---
 
 ## 🔊 噪声管理
+
+<p align="center">
+  <img src="docs/pic/noise.jpg" alt="噪声管理器" width="900">
+</p>
 
 系统支持多种噪声类型，可叠加多个噪声实例，模拟真实 EEG 环境中的各种干扰。
 

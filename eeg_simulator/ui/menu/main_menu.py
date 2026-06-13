@@ -30,9 +30,9 @@ class SettingsDialog(QDialog):
         lang_layout.addWidget(QLabel(tr('settings_language')))
         
         self.lang_combo = QComboBox()
-        self.lang_combo.addItem("中文 (简体)", "zh_CN")
-        self.lang_combo.addItem("English", "en")
-        self.lang_combo.setCurrentIndex(0 if self.settings.get('language', 'zh_CN') == 'zh_CN' else 1)
+        self.lang_combo.addItem(tr('settings_lang_zh'), "zh_CN")
+        self.lang_combo.addItem(tr('settings_lang_en'), "en")
+        self.lang_combo.setCurrentIndex(0 if self.settings.get('language', 'en') == 'zh_CN' else 1)
         lang_layout.addWidget(self.lang_combo)
         lang_layout.addStretch()
         layout.addWidget(lang_group)
@@ -219,7 +219,7 @@ class MainMenuBar(QMenuBar):
             self.settings = config.get_all()
         else:
             self.settings = {
-                'language': 'zh_CN',
+                'language': 'en',
                 'dark_mode': True,
                 'animations': True,
                 'default_sampling_rate': 1000,
