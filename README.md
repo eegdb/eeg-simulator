@@ -138,6 +138,10 @@ python -m eeg_simulator
 - **耦合模型**：定义 Patch 之间的线性/非线性/延迟连接
 - **噪声设置**：添加白噪声、生理噪声等
 
+<p align="center">
+  <img src="docs/pic/noise.jpg" alt="噪声管理器" width="900">
+</p>
+
 #### 4. 设置 BEM 模型（可选）
 - 设置脑组织、颅骨、头皮的导电率
 - 点击 **"生成 BEM 模型"**
@@ -209,10 +213,6 @@ patch = Patch(
 ---
 
 ## 🔊 噪声管理
-
-<p align="center">
-  <img src="docs/pic/noise.jpg" alt="噪声管理器" width="900">
-</p>
 
 系统支持多种噪声类型，可叠加多个噪声实例，模拟真实 EEG 环境中的各种干扰。
 

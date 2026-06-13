@@ -139,6 +139,10 @@ python -m eeg_simulator
 - **Coupling Models**: Define linear/non-linear/delayed connections between Patches
 - **Noise Settings**: Add white noise, physiological noise, etc.
 
+<p align="center">
+  <img src="docs/pic/noise.jpg" alt="Noise Manager" width="900">
+</p>
+
 #### 4. Set BEM Model (Optional)
 - Set conductivity for brain, skull, and scalp
 - Click **"Generate BEM Model"**
@@ -210,10 +214,6 @@ Define signal connection relationships between Patches:
 ---
 
 ## 🔊 Noise Management
-
-<p align="center">
-  <img src="docs/pic/noise.jpg" alt="Noise Manager" width="900">
-</p>
 
 The system supports multiple noise types and allows stacking multiple noise instances to simulate various interferences in real EEG environments.
 
