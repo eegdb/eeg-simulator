@@ -21,6 +21,7 @@ import mne
 
 from ..styles import COLORS
 from ...utils import tr
+from ...utils.mri_display import prepare_axial_slice, vox_to_display_xy
 
 
 class SourceSpaceSelectorDialog(QDialog):
@@ -628,8 +629,8 @@ class SourceSpaceSelectorDialog(QDialog):
         
         坐标转换说明：
         - vox_pos 是体素坐标 [x, y, z]，其中 z 对应MRI切片层号
-        - 显示时需要对Y轴翻转：display_y = 256 - vox_y
-          这是因为matplotlib的图像坐标系Y轴向下，而MRI的Y轴向上
+        - 切片经 rot90 + flipud 校正为放射学方向（A 在上、P 在下）
+        - 散点坐标与体素 x/y 一一对应：display = (vox_x, vox_y)
         - 只显示当前Z层附近 (current_z ± z_tolerance) 的顶点
         """
         self.ax.clear()
@@ -638,9 +639,9 @@ class SourceSpaceSelectorDialog(QDialog):
         if self.t1_data is None:
             return
 
-        # 显示MRI切片 (使用rot90使图像方向正确)
+        # 显示MRI切片 (rot90 + flipud 使前后方向与放射学惯例一致)
         z = self.current_z
-        slice_data = np.rot90(self.t1_data[:, :, z])
+        slice_data = prepare_axial_slice(self.t1_data, z)
         
         self.ax.imshow(slice_data, cmap='gray', vmin=0, vmax=150, aspect='equal')
         self.ax.set_title(f'Z = {z} | Face↑ | Click points to select', color='white', fontsize=11)
@@ -711,9 +712,8 @@ class SourceSpaceSelectorDialog(QDialog):
             if abs(vox_z - z) > z_tolerance:
                 continue
 
-            # 转换坐标 (vox_x, 256-vox_y) 因为np.rot90
-            display_x = v['vox_pos'][0]
-            display_y = self.t1_data.shape[1] - v['vox_pos'][1]
+            # 转换坐标 (vox_x, vox_y) 与 prepare_axial_slice 输出对齐
+            display_x, display_y = vox_to_display_xy(v['vox_pos'])
 
             pt = (display_x, display_y, v['index'])
 
@@ -783,8 +783,7 @@ class SourceSpaceSelectorDialog(QDialog):
                 continue
 
             # 计算2D距离
-            vx = v['vox_pos'][0]
-            vy = self.t1_data.shape[1] - v['vox_pos'][1]
+            vx, vy = vox_to_display_xy(v['vox_pos'])
             dist = ((vx - x)**2 + (vy - y)**2)**0.5
 
             if dist < min_dist:

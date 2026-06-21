@@ -23,6 +23,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from ...utils import tr, get_logger
+from ...utils.mri_display import prepare_axial_slice, vox_to_display_xy
 from ...models import Patch
 from ...ui.themes import get_color
 
@@ -1309,6 +1310,14 @@ class PatchManagerDialog(QDialog):
         # 同步更新列表选中状态
         self._sync_list_selection(dipole_id)
         
+        # 跳转到偶极子所在 MRI 层并刷新标记
+        if dipole_id in self.dipole_vox_positions:
+            vox_pos = self.dipole_vox_positions[dipole_id]
+            self.current_z = int(vox_pos[2])
+            if hasattr(self, 'layer_slider'):
+                self.layer_slider.set_val(self.current_z)
+        self._update_mri_plot()
+        
         # 自动填充默认 Patch 名称
         self._auto_fill_patch_name(dipole)
         
@@ -1339,13 +1348,6 @@ class PatchManagerDialog(QDialog):
                 if dipole and dipole.vertno == data.get('vertno'):
                     self.label_dipole_list.setCurrentItem(item)
                     return
-        
-        # 如果有该偶极子的体素位置，跳转到对应层
-        if dipole_id in self.dipole_vox_positions:
-            vox_pos = self.dipole_vox_positions[dipole_id]
-            self.current_z = int(vox_pos[2])
-            self.layer_slider.set_val(self.current_z)
-            self._update_mri_plot()
         
         # 更新附近偶极子数量
         self._update_nearby_dipoles()
@@ -1393,7 +1395,7 @@ class PatchManagerDialog(QDialog):
             return
         
         z = self.current_z
-        slice_data = np.rot90(self.t1_data[:, :, z])
+        slice_data = prepare_axial_slice(self.t1_data, z)
         
         # 根据背景色亮度调整MRI显示：深色背景使用反转灰度
         bg_card_color = get_color('bg_card')
@@ -1508,8 +1510,7 @@ class PatchManagerDialog(QDialog):
             if not dipole:
                 continue
             
-            display_x = vox_pos[0]
-            display_y = self.t1_data.shape[1] - vox_pos[1]
+            display_x, display_y = vox_to_display_xy(vox_pos)
             
             # 检查是否在当前 Label 中
             in_current_label = dipole.vertno in label_vertnos
@@ -1542,9 +1543,7 @@ class PatchManagerDialog(QDialog):
                     if self.vox_pts is not None and vox_idx < len(self.vox_pts):
                         vox_pos = self.vox_pts[vox_idx]
                         if abs(vox_pos[2] - z) <= z_tolerance:
-                            display_x = vox_pos[0]
-                            display_y = self.t1_data.shape[1] - vox_pos[1]
-                            radius_dipoles.append((display_x, display_y))
+                            radius_dipoles.append(vox_to_display_xy(vox_pos))
         
         # 3. 绘制当前 Label 下未创建的源点（不在半径内的）
         if hasattr(self, 'selected_label') and self.selected_label and self.src:
@@ -1562,9 +1561,8 @@ class PatchManagerDialog(QDialog):
                     if self.vox_pts is not None and vox_idx < len(self.vox_pts):
                         vox_pos = self.vox_pts[vox_idx]
                         if abs(vox_pos[2] - z) <= z_tolerance:
-                            display_x = vox_pos[0]
-                            display_y = self.t1_data.shape[1] - vox_pos[1]
-                            label_not_created.append((display_x, display_y, vertno))
+                            dx, dy = vox_to_display_xy(vox_pos)
+                            label_not_created.append((dx, dy, vertno))
         
         # 绘制其他偶极子（灰色，低透明度）
         # if other_dipoles:
@@ -1684,8 +1682,7 @@ class PatchManagerDialog(QDialog):
             if not dipole or dipole.vertno not in label_vertnos:
                 continue
             
-            vx = vox_pos[0]
-            vy = self.t1_data.shape[1] - vox_pos[1]
+            vx, vy = vox_to_display_xy(vox_pos)
             dist = ((vx - x)**2 + (vy - y)**2)**0.5
             
             if dist < min_dist:
@@ -1705,8 +1702,7 @@ class PatchManagerDialog(QDialog):
                     if self.vox_pts is not None and vox_idx < len(self.vox_pts):
                         vox_pos = self.vox_pts[vox_idx]
                         if abs(vox_pos[2] - self.current_z) <= z_tolerance:
-                            vx = vox_pos[0]
-                            vy = self.t1_data.shape[1] - vox_pos[1]
+                            vx, vy = vox_to_display_xy(vox_pos)
                             dist = ((vx - x)**2 + (vy - y)**2)**0.5
                             
                             if dist < min_dist:
