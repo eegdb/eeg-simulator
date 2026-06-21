@@ -503,16 +503,28 @@ class SimulatorSignal:
             logger.warning(f"滤波应用失败 ({ch_name}): {e}")
             return data
 
+    def _clear_display_buffers(self):
+        """清空实时显示缓冲区，避免滤波参数变更后新旧结果混杂。"""
+        n = self._sim.buffer_size
+        if self._sim.time_buffer.size:
+            self._sim.time_buffer.fill(0)
+        for ch_name in self._sim.selected_channels:
+            if ch_name not in self._sim.eeg_buffer:
+                self._sim.eeg_buffer[ch_name] = np.zeros(n)
+            else:
+                self._sim.eeg_buffer[ch_name].fill(0)
+
     def _on_filter_changed(self):
-        """滤波参数改变时重新初始化滤波器"""
+        """滤波参数改变时重新初始化滤波器并清空显示缓冲"""
         logger.info("滤波参数已改变，重新初始化滤波器")
-        # 重新初始化滤波器状态和系数
         if self._sim.is_running:
             self._init_filter_states()
+            self._clear_display_buffers()
+            self._sim.simulation._update_plots()
         else:
-            # 如果仿真未运行，清空滤波状态，下次启动时重新初始化
             self._sim._filter_states.clear()
             self._sim._filter_coeffs.clear()
+            self._clear_display_buffers()
 
     def _update_fft_spectrum(self, n_samples):
         """更新FFT频谱显示"""

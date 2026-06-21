@@ -11,6 +11,7 @@
 | [01_source_config_page.md](01_source_config_page.md) | 源空间配置 | 加载大脑源空间，选择仿真位置 |
 | [02_patch_manager.md](02_patch_manager.md) | Patch管理器 | 创建和管理偶极子组，设置波形 |
 | [03_noise_manager.md](03_noise_manager.md) | 噪声管理器 | 添加各类噪声，提高仿真真实性 |
+| [noise_spatial_model_todo.md](noise_spatial_model_todo.md) | 噪声（技术待办） | **当前实现与空间相关噪声改进计划** |
 | [04_coupling_manager.md](04_coupling_manager.md) | 耦合管理器 | 配置Patch间功能连接 |
 | [05_signal_page.md](05_signal_page.md) | 实时信号 | 显示波形、频谱和地形图 |
 | [06_electrode_channels_page.md](06_electrode_channels_page.md) | 电极通道 | 配置电极布局和通道选择 |
