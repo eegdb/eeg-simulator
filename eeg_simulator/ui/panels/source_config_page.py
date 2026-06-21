@@ -269,8 +269,8 @@ class SourceConfigPage(NavigationPage):
         self.decay_spin.valueChanged.connect(self._on_mne_coupling_params_changed)
     
     def _on_mne_coupling_params_changed(self):
-        if hasattr(self.parent_simulator, 'invalidate_mne_coupling_cache'):
-            self.parent_simulator.invalidate_mne_coupling_cache()
+        if hasattr(self.parent_simulator, 'signal'):
+            self.parent_simulator.signal.invalidate_mne_coupling_cache()
     
     def _populate_src_combo(self):
         """填充src文件选择下拉框"""
@@ -311,7 +311,7 @@ class SourceConfigPage(NavigationPage):
             
             self._load_labels(subjects_dir, self.subject)
             self.parent_simulator.subjects_dir = subjects_dir
-            self.parent_simulator.init_mne_coupling_engine(self.loaded_src, self.src_labels)
+            self.parent_simulator.mne.init_mne_coupling_engine(self.loaded_src, self.src_labels)
             
             self.src_info_label.setText(self._get_src_info_text(self.loaded_src))
             self.src_info_label.setStyleSheet(f"color: {get_color('accent')}; font-size: 12px;")
@@ -336,7 +336,7 @@ class SourceConfigPage(NavigationPage):
                 fwd_path = os.path.join(data_path, 'MEG', 'sample', fwd_filename)
                 if os.path.exists(fwd_path):
                     try:
-                        self.parent_simulator.load_mne_data(fwd_path)
+                        self.parent_simulator.mne.load_mne_data(fwd_path)
                         logger.info(f"已加载EEG前向模型: {fwd_filename}")
                     except Exception as fwd_e:
                         logger.warning(f"EEG前向模型加载失败: {fwd_e}")
@@ -347,7 +347,7 @@ class SourceConfigPage(NavigationPage):
                         fwd_path_fallback = os.path.join(data_path, 'MEG', 'sample', fwd_filename_fallback)
                         if os.path.exists(fwd_path_fallback):
                             try:
-                                self.parent_simulator.load_mne_data(fwd_path_fallback)
+                                self.parent_simulator.mne.load_mne_data(fwd_path_fallback)
                                 logger.info(f"已加载MEG+EEG前向模型: {fwd_filename_fallback}")
                             except Exception as fwd_e2:
                                 logger.warning(f"MEG+EEG前向模型加载失败: {fwd_e2}")
@@ -472,8 +472,8 @@ class SourceConfigPage(NavigationPage):
         """噪声配置改变"""
         self.active_noise_configs = noise_configs
         self._update_noise_stats()
-        if hasattr(self.parent_simulator, 'set_noise_configs'):
-            self.parent_simulator.set_noise_configs(noise_configs)
+        if hasattr(self.parent_simulator, 'patch_ops'):
+            self.parent_simulator.patch_ops.set_noise_configs(noise_configs)
     
     def _update_noise_stats(self):
         """更新噪声统计"""
@@ -513,8 +513,8 @@ class SourceConfigPage(NavigationPage):
             self.knn_spin.setValue(int(settings['knn_k']))
         if 'decay_length' in settings:
             self.decay_spin.setValue(float(settings['decay_length']))
-        if hasattr(self.parent_simulator, 'invalidate_mne_coupling_cache'):
-            self.parent_simulator.invalidate_mne_coupling_cache()
+        if hasattr(self.parent_simulator, 'signal'):
+            self.parent_simulator.signal.invalidate_mne_coupling_cache()
     
     def _on_manage_coupling(self):
         """打开耦合管理"""
@@ -526,7 +526,7 @@ class SourceConfigPage(NavigationPage):
     
     def _update_coupling_stats(self):
         """更新耦合统计"""
-        couplings = self.parent_simulator.coupling_models
+        couplings = self.parent_simulator.patch_ops.coupling_models
         count = len(couplings)
         if count > 0:
             self.coupling_count_label.setText(tr('coupling_count_total', count))

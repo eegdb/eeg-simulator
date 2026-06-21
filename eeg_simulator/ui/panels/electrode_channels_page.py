@@ -272,11 +272,11 @@ class ElectrodeChannelsPage(NavigationPage):
         
         # 通知父级更新图表
         if hasattr(self.parent_simulator, '_update_plot_curves'):
-            self.parent_simulator._update_plot_curves()
+            self.parent_simulator.buffers._update_plot_curves()
         
         # 更新状态栏
         if hasattr(self.parent_simulator, '_update_status_bar'):
-            self.parent_simulator._update_status_bar()
+            self.parent_simulator.ui._update_status_bar()
     
     def get_current_montage(self):
         """获取当前选中的电极布局"""

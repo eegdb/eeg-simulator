@@ -27,7 +27,7 @@ class CouplingManagerDialog(QDialog):
         
         self.parent_simulator = parent_simulator
         self.patches = parent_simulator.patches
-        self.coupling_models = parent_simulator.coupling_models
+        self.coupling_models = parent_simulator.patch_ops.coupling_models
         
         self.init_ui()
         self.refresh_coupling_list()
@@ -309,7 +309,7 @@ class CouplingManagerDialog(QDialog):
         strength = self.strength_spin.value()
         delay = self.delay_spin.value()
         
-        new_id = self.parent_simulator.add_coupling_model(
+        new_id = self.parent_simulator.patch_ops.add_coupling_model(
             source_patch_id=source_id,
             target_patch_id=target_id,
             type=coupling_type,
@@ -339,7 +339,7 @@ class CouplingManagerDialog(QDialog):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.parent_simulator.delete_coupling_model(coupling_id)
+            self.parent_simulator.patch_ops.delete_coupling_model(coupling_id)
             self.refresh_coupling_list()
             self.coupling_changed.emit()
             logger.info(f"Deleted coupling: {coupling_id}")
@@ -356,7 +356,7 @@ class CouplingManagerDialog(QDialog):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.parent_simulator.clear_coupling_models()
+            self.parent_simulator.patch_ops.clear_coupling_models()
             self.refresh_coupling_list()
             self.coupling_changed.emit()
             logger.info("Cleared all couplings")
@@ -364,7 +364,7 @@ class CouplingManagerDialog(QDialog):
     def _on_edit_strength_changed(self, value):
         """编辑强度改变"""
         if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            if self.parent_simulator.modify_coupling_model(
+            if self.parent_simulator.patch_ops.modify_coupling_model(
                 self.current_edit_id, strength=value
             ):
                 self.refresh_coupling_list(select_id=self.current_edit_id)
@@ -373,7 +373,7 @@ class CouplingManagerDialog(QDialog):
     def _on_edit_delay_changed(self, value):
         """编辑延迟改变"""
         if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            if self.parent_simulator.modify_coupling_model(
+            if self.parent_simulator.patch_ops.modify_coupling_model(
                 self.current_edit_id, delay=value
             ):
                 self.refresh_coupling_list(select_id=self.current_edit_id)
@@ -383,7 +383,7 @@ class CouplingManagerDialog(QDialog):
         """编辑类型改变"""
         if hasattr(self, 'current_edit_id') and self.current_edit_id:
             new_type = self.edit_type_combo.currentData()
-            if self.parent_simulator.modify_coupling_model(
+            if self.parent_simulator.patch_ops.modify_coupling_model(
                 self.current_edit_id, type=new_type
             ):
                 self.refresh_coupling_list(select_id=self.current_edit_id)

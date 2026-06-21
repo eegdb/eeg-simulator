@@ -45,6 +45,8 @@ class PatchManagerDialog(QDialog):
         
         self.parent_simulator = parent_simulator
         self.patches = parent_simulator.patches
+        if hasattr(parent_simulator, 'patch_ops'):
+            parent_simulator.patch_ops._sync_entity_counters()
         
         # 获取 source_page 的数据 (NavigationView 布局)
         self.src = getattr(parent_simulator.source_page, 'loaded_src', None)
@@ -1244,7 +1246,7 @@ class PatchManagerDialog(QDialog):
                 orientation = src['nn'][vertno].tolist() if 'nn' in src else [0, 0, 1]
                 
                 # 创建偶极子（不放入任何 Patch，临时存储）
-                dipole = self.parent_simulator.create_dipole(
+                dipole = self.parent_simulator.patch_ops.create_dipole(
                     position=position,
                     orientation=orientation,
                     hemi=hemi,
@@ -1463,7 +1465,7 @@ class PatchManagerDialog(QDialog):
             center_dipole = all_dipoles.get(self.selected_dipole_id)
             if center_dipole:
                 # 在源空间中查找半径内的所有顶点
-                nearby_vertices = self.parent_simulator.find_dipoles_in_radius(
+                nearby_vertices = self.parent_simulator.patch_ops.find_dipoles_in_radius(
                     center_position=center_dipole.position.tolist(),
                     radius=radius,
                     src=self.src,
@@ -1731,13 +1733,14 @@ class PatchManagerDialog(QDialog):
         orientation = src['nn'][vertno].tolist() if 'nn' in src else [0, 0, 1]
         
         # 创建偶极子
-        dipole_id = self.parent_simulator.add_dipole(
+        dipole = self.parent_simulator.patch_ops.create_dipole(
             position=position,
             orientation=orientation,
             hemi=hemi,
             vertno=vertno,
             src_idx=src_idx
         )
+        dipole_id = dipole.id
         
         # 重新收集位置信息
         self._collect_dipole_positions()
@@ -1771,7 +1774,7 @@ class PatchManagerDialog(QDialog):
         radius = self.radius_spin.value() / 1000.0  # mm to m
         
         # 在源空间中查找半径内的所有顶点
-        nearby_vertices = self.parent_simulator.find_dipoles_in_radius(
+        nearby_vertices = self.parent_simulator.patch_ops.find_dipoles_in_radius(
             center_position=dipole.position.tolist(),
             radius=radius,
             src=self.src,
@@ -1879,7 +1882,7 @@ class PatchManagerDialog(QDialog):
         user_name = self.patch_name.text().strip()
         name = user_name if user_name else None
         
-        self.parent_simulator.modify_patch(
+        self.parent_simulator.patch_ops.modify_patch(
             self.current_patch_id,
             name=name,
             waveform_type=waveform_type,
@@ -1922,10 +1925,10 @@ class PatchManagerDialog(QDialog):
             QMessageBox.warning(self, tr('warning'), tr('msg_select_center_dipole'))
             return
         
-        # 检查该偶极子是否已在 Patch 中
+        # 检查该偶极子是否已在 Patch 中（按对象身份，避免 ID 重复时的误判）
         for patch in self.parent_simulator.patches.values():
-            if patch.get_dipole_by_id(self.selected_dipole_id):
-                QMessageBox.warning(self, tr('warning'), 
+            if center_dipole in patch.dipoles:
+                QMessageBox.warning(self, tr('warning'),
                     tr('msg_dipole_already_in_patch', self.selected_dipole_id))
                 return
         
@@ -1949,7 +1952,7 @@ class PatchManagerDialog(QDialog):
         # 计算 src_idx
         src_idx = 0 if center_dipole.hemi == 'lh' else 1
         
-        patch_id = self.parent_simulator.create_patch(
+        patch_id = self.parent_simulator.patch_ops.create_patch(
             position=center_dipole.position.tolist(),
             orientation=center_dipole.orientation.tolist(),
             radius=radius,
@@ -1964,7 +1967,7 @@ class PatchManagerDialog(QDialog):
         )
         
         # 在源空间中查找半径内的所有顶点
-        nearby_vertices = self.parent_simulator.find_dipoles_in_radius(
+        nearby_vertices = self.parent_simulator.patch_ops.find_dipoles_in_radius(
             center_position=center_dipole.position.tolist(),
             radius=radius,
             src=self.src,
@@ -1986,7 +1989,7 @@ class PatchManagerDialog(QDialog):
                         continue
                     
                     # 创建偶极子
-                    dipole = self.parent_simulator.create_dipole(
+                    dipole = self.parent_simulator.patch_ops.create_dipole(
                         position=vertex_info['position'],
                         orientation=vertex_info['orientation'],
                         hemi=vertex_info['hemi'],
@@ -2033,7 +2036,7 @@ class PatchManagerDialog(QDialog):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.parent_simulator.delete_patch(self.current_patch_id)
+            self.parent_simulator.patch_ops.delete_patch(self.current_patch_id)
             self.patch_deleted.emit(self.current_patch_id)
             self.refresh_patch_list()
             # 刷新当前 Label 的偶极子列表（因为有些可能被释放）

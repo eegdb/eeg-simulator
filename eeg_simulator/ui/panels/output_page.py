@@ -250,7 +250,7 @@ class OutputPage(NavigationPage):
         """输出格式改变"""
         self._init_output_config_ui()
         if hasattr(self.parent_simulator, '_update_status_bar'):
-            self.parent_simulator._update_status_bar()
+            self.parent_simulator.ui._update_status_bar()
     
     def _select_output_dir(self):
         """选择输出文件夹"""
@@ -265,56 +265,20 @@ class OutputPage(NavigationPage):
     def _on_sr_changed(self, value):
         """采样率改变"""
         if hasattr(self.parent_simulator, '_on_sr_changed_from_page'):
-            self.parent_simulator._on_sr_changed_from_page(value)
+            self.parent_simulator.buffers._on_sr_changed_from_page(value)
         else:
             self.parent_simulator.sampling_rate = value
             if hasattr(self.parent_simulator, '_update_status_bar'):
-                self.parent_simulator._update_status_bar()
+                self.parent_simulator.ui._update_status_bar()
     
     def _on_sim_control_clicked(self):
         """仿真控制按钮点击"""
         if self.parent_simulator.is_running:
-            self.parent_simulator.stop_simulation()
-            self.sim_control_btn.setText(tr('btn_start_sim'))
-            self.sim_control_btn.setStyleSheet(get_primary_btn_style())
-            self.status_label.setText(tr('status_stopped'))
-            self.status_frame.setStyleSheet(f"""
-                background-color: {get_color('bg_input')};
-                border-radius: 8px;
-                border: 1px solid {get_color('border')};
-            """)
+            self.parent_simulator.simulation.stop_simulation()
         else:
-            self.parent_simulator.start_simulation()
-            
-            # 如果仿真启动成功，自动跳转到实时信号界面
-            if self.parent_simulator.is_running:
-                if hasattr(self.parent_simulator, 'nav_view'):
-                    self.parent_simulator.nav_view.set_current_page('signal')
-            
-            self.sim_control_btn.setText(tr('btn_stop_sim'))
-            self.sim_control_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {get_color('red')}20;
-                    color: {get_color('red')};
-                    border: 1px solid {get_color('red')}40;
-                    border-radius: 6px;
-                    padding: 8px 16px;
-                    font-weight: bold;
-                    min-height: 36px;
-                }}
-                QPushButton:hover {{
-                    background-color: {get_color('red')}30;
-                }}
-            """)
-            self.status_label.setText(tr('status_running'))
-            self.status_frame.setStyleSheet(f"""
-                background-color: {get_color('accent')}33;
-                border-radius: 8px;
-                border: 1px solid {get_color('accent')};
-            """)
-        # 刷新按钮样式
-        self.sim_control_btn.style().unpolish(self.sim_control_btn)
-        self.sim_control_btn.style().polish(self.sim_control_btn)
+            self.parent_simulator.simulation.start_simulation()
+            if self.parent_simulator.is_running and hasattr(self.parent_simulator, 'nav_view'):
+                self.parent_simulator.nav_view.set_current_page('signal')
     
     def update_simulation_status(self, is_running, elapsed_time_str="00:00:00"):
         """更新仿真状态"""
