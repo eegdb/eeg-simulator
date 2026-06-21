@@ -352,125 +352,23 @@ class SourceConfigPage(NavigationPage):
     
     def _load_labels(self, subjects_dir, subject):
         """加载解剖学标签"""
-        import mne
-        import os
-        
-        self.src_labels = {'lh': {}, 'rh': {}}
-        self.label_source_map = {'lh': {}, 'rh': {}}
+        from ...utils.mne_loader import build_label_source_map
+
         labels_dir = os.path.join(subjects_dir, subject, 'label')
-        
         if not os.path.exists(labels_dir):
             logger.warning(f"标签目录不存在: {labels_dir}")
             return
-        
-        # 获取源空间中实际存在的顶点集合
-        src_vertices = {'lh': set(), 'rh': set()}
-        src_vertno_to_idx = {'lh': {}, 'rh': {}}
-        
-        if self.loaded_src:
-            for src_idx, s in enumerate(self.loaded_src):
-                if s['type'] == 'surf':
-                    hemi = 'lh' if src_idx == 0 else 'rh'
-                    for i, vertno in enumerate(s['vertno']):
-                        src_vertices[hemi].add(vertno)
-                        src_vertno_to_idx[hemi][vertno] = i if src_idx == 0 else i + len(self.loaded_src[0]['vertno'])
-        
-        # 1. 加载 .label 文件 (Desikan-Killiany)
-        for fname in os.listdir(labels_dir):
-            if fname.endswith('.label'):
-                try:
-                    parts = fname.replace('.label', '').split('.')
-                    if len(parts) >= 2:
-                        hemi_part = parts[0]
-                        hemi = hemi_part.split('-')[0] if '-' in hemi_part else hemi_part
-                        label_name = '.'.join(parts[1:])
-                        
-                        label_path = os.path.join(labels_dir, fname)
-                        label = mne.read_label(label_path, subject=subject)
-                        
-                        if hemi not in self.src_labels:
-                            self.src_labels[hemi] = {}
-                            self.label_source_map[hemi] = {}
-                        
-                        if label_name not in self.src_labels[hemi]:
-                            self.src_labels[hemi][label_name] = []
-                            self.label_source_map[hemi][label_name] = []
-                        
-                        self.src_labels[hemi][label_name].extend(label.vertices.tolist())
-                        
-                        # 预计算该label在源空间中实际存在的source索引
-                        label_set = set(label.vertices)
-                        available_vertices = label_set & src_vertices.get(hemi, set())
-                        
-                        for vertno in sorted(available_vertices):
-                            idx = src_vertno_to_idx[hemi].get(vertno)
-                            if idx is not None:
-                                self.label_source_map[hemi][label_name].append({
-                                    'vertno': vertno,
-                                    'index': idx
-                                })
-                except Exception as e:
-                    logger.debug(f"Failed to load label {fname}: {e}")
-        
-        # 2. 从 .annot 文件加载 Destrieux (a2009s) 分区
-        self._load_annot_labels(subjects_dir, subject, src_vertices, src_vertno_to_idx)
-        
-        # 统计
+
+        self.src_labels, self.label_source_map = build_label_source_map(
+            self.loaded_src, subjects_dir, subject
+        )
+
         lh_labels = list(self.label_source_map.get('lh', {}).keys())
         rh_labels = list(self.label_source_map.get('rh', {}).keys())
-        a2009s_count = sum(1 for name in lh_labels + rh_labels if 'a2009s' in name.lower())
+        a2009s_count = sum(1 for name in lh_labels + rh_labels if name.lower().startswith('a2009s.'))
         aparc_count = len(lh_labels) + len(rh_labels) - a2009s_count
-        
+
         logger.info(f"标签加载完成: LH={len(lh_labels)}, RH={len(rh_labels)}, aparc={aparc_count}, a2009s={a2009s_count}")
-    
-    def _load_annot_labels(self, subjects_dir, subject, src_vertices, src_vertno_to_idx):
-        """从 .annot 文件加载解剖学标签 (Destrieux a2009s)"""
-        import mne
-        import os
-        
-        try:
-            for hemi_name in ['lh', 'rh']:
-                annot_file = os.path.join(subjects_dir, subject, 'label', f'{hemi_name}.aparc.a2009s.annot')
-                if os.path.exists(annot_file):
-                    logger.info(f"加载 a2009s annot: {annot_file}")
-                    
-                    labels = mne.read_labels_from_annot(
-                        subject,
-                        parc='aparc.a2009s',
-                        hemi=hemi_name,
-                        subjects_dir=subjects_dir,
-                        verbose=False
-                    )
-                    
-                    hemi = hemi_name
-                    if hemi not in self.label_source_map:
-                        self.label_source_map[hemi] = {}
-                    if hemi not in self.src_labels:
-                        self.src_labels[hemi] = {}
-                    
-                    for label in labels:
-                        # label.name 格式如: 'G_and_S_frontomargin-lh'
-                        # 添加 a2009s. 前缀以区分
-                        label_name = f"a2009s.{label.name}"
-                        
-                        if label_name not in self.src_labels[hemi]:
-                            self.src_labels[hemi][label_name] = []
-                            self.label_source_map[hemi][label_name] = []
-                        
-                        self.src_labels[hemi][label_name].extend(label.vertices.tolist())
-                        
-                        label_set = set(label.vertices)
-                        available_vertices = label_set & src_vertices.get(hemi, set())
-                        
-                        for vertno in sorted(available_vertices):
-                            idx = src_vertno_to_idx[hemi].get(vertno)
-                            if idx is not None:
-                                self.label_source_map[hemi][label_name].append({
-                                    'vertno': vertno,
-                                    'index': idx
-                                })
-        except Exception as e:
-            logger.warning(f"加载 annot labels 失败: {e}")
     
     def _get_src_info_text(self, src):
         """获取源空间信息文本"""

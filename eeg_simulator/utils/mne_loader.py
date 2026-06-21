@@ -20,6 +20,187 @@ import mne
 import numpy as np
 
 
+# FreeSurfer Desikan-Killiany (aparc) 皮层分区名称
+APARC_REGIONS = frozenset({
+    'bankssts', 'caudalanteriorcingulate', 'caudalmiddlefrontal', 'cuneus',
+    'entorhinal', 'fusiform', 'inferiorparietal', 'inferiortemporal',
+    'isthmuscingulate', 'lateraloccipital', 'lateralorbitofrontal', 'lingual',
+    'medialorbitofrontal', 'middletemporal', 'parahippocampal', 'paracentral',
+    'parsopercularis', 'parsorbitalis', 'parstriangularis', 'pericalcarine',
+    'postcentral', 'posteriorcingulate', 'precentral', 'precuneus',
+    'rostralanteriorcingulate', 'rostralmiddlefrontal', 'superiorfrontal',
+    'superiorparietal', 'superiortemporal', 'supramarginal', 'frontalpole',
+    'temporalpole', 'transversetemporal', 'insula', 'unknown',
+})
+
+
+def _src_vertex_maps(loaded_src):
+    """从源空间构建顶点集合与索引映射"""
+    src_vertices = {'lh': set(), 'rh': set()}
+    src_vertno_to_idx = {'lh': {}, 'rh': {}}
+
+    if not loaded_src:
+        return src_vertices, src_vertno_to_idx
+
+    for src_idx, s in enumerate(loaded_src):
+        if s['type'] != 'surf':
+            continue
+        hemi = 'lh' if src_idx == 0 else 'rh'
+        offset = 0 if src_idx == 0 else len(loaded_src[0]['vertno'])
+        for i, vertno in enumerate(s['vertno']):
+            src_vertices[hemi].add(vertno)
+            src_vertno_to_idx[hemi][vertno] = offset + i
+
+    return src_vertices, src_vertno_to_idx
+
+
+def _add_label_vertices(src_labels, label_source_map, hemi, label_name, vertices,
+                        src_vertices, src_vertno_to_idx):
+    """将 label 顶点写入映射表"""
+    if hemi not in src_labels:
+        src_labels[hemi] = {}
+        label_source_map[hemi] = {}
+
+    if label_name not in src_labels[hemi]:
+        src_labels[hemi][label_name] = []
+        label_source_map[hemi][label_name] = []
+
+    src_labels[hemi][label_name].extend(vertices.tolist())
+
+    available_vertices = set(vertices.tolist()) & src_vertices.get(hemi, set())
+    for vertno in sorted(available_vertices):
+        idx = src_vertno_to_idx[hemi].get(vertno)
+        if idx is not None:
+            label_source_map[hemi][label_name].append({
+                'vertno': vertno,
+                'index': idx,
+            })
+
+
+def _aparc_region_name(label, hemi):
+    """从 MNE label 名称提取 aparc 分区名（去掉 -lh/-rh 后缀）"""
+    suffix = f'-{hemi}'
+    if label.name.endswith(suffix):
+        return label.name[:-len(suffix)]
+    return label.name
+
+
+def _load_aparc_from_annot(subjects_dir, subject, src_vertices, src_vertno_to_idx,
+                           src_labels, label_source_map):
+    """从 lh/rh.aparc.annot 加载 Desikan-Killiany 分区"""
+    loaded = False
+    for hemi in ('lh', 'rh'):
+        annot_file = os.path.join(subjects_dir, subject, 'label', f'{hemi}.aparc.annot')
+        if not os.path.exists(annot_file):
+            continue
+
+        labels = mne.read_labels_from_annot(
+            subject,
+            parc='aparc',
+            hemi=hemi,
+            subjects_dir=subjects_dir,
+            verbose=False,
+        )
+        loaded = True
+        for label in labels:
+            region = _aparc_region_name(label, hemi)
+            _add_label_vertices(
+                src_labels, label_source_map, hemi, region, label.vertices,
+                src_vertices, src_vertno_to_idx,
+            )
+    return loaded
+
+
+def _load_aparc_from_label_files(subjects_dir, subject, src_vertices, src_vertno_to_idx,
+                                 src_labels, label_source_map):
+    """从 .label 文件加载 aparc 分区（仅白名单内的标准分区名）"""
+    labels_dir = os.path.join(subjects_dir, subject, 'label')
+    if not os.path.exists(labels_dir):
+        return False
+
+    loaded = False
+    for fname in os.listdir(labels_dir):
+        if not fname.endswith('.label'):
+            continue
+
+        parts = fname.replace('.label', '').split('.')
+        if len(parts) < 2:
+            continue
+
+        hemi_part = parts[0]
+        hemi = hemi_part.split('-')[0] if '-' in hemi_part else hemi_part
+        label_name = '.'.join(parts[1:])
+
+        if label_name not in APARC_REGIONS:
+            continue
+
+        try:
+            label_path = os.path.join(labels_dir, fname)
+            label = mne.read_label(label_path, subject=subject)
+            loaded = True
+            _add_label_vertices(
+                src_labels, label_source_map, hemi, label_name, label.vertices,
+                src_vertices, src_vertno_to_idx,
+            )
+        except Exception:
+            continue
+    return loaded
+
+
+def _load_a2009s_from_annot(subjects_dir, subject, src_vertices, src_vertno_to_idx,
+                            src_labels, label_source_map):
+    """从 lh/rh.aparc.a2009s.annot 加载 Destrieux 分区"""
+    loaded = False
+    for hemi in ('lh', 'rh'):
+        annot_file = os.path.join(subjects_dir, subject, 'label', f'{hemi}.aparc.a2009s.annot')
+        if not os.path.exists(annot_file):
+            continue
+
+        labels = mne.read_labels_from_annot(
+            subject,
+            parc='aparc.a2009s',
+            hemi=hemi,
+            subjects_dir=subjects_dir,
+            verbose=False,
+        )
+        loaded = True
+        for label in labels:
+            label_name = f"a2009s.{label.name}"
+            _add_label_vertices(
+                src_labels, label_source_map, hemi, label_name, label.vertices,
+                src_vertices, src_vertno_to_idx,
+            )
+    return loaded
+
+
+def build_label_source_map(loaded_src, subjects_dir, subject):
+    """构建 aparc 与 a2009s 图谱的 label 映射
+
+    Desikan-Killiany 从 FreeSurfer 的 .aparc.annot 读取标准分区；
+    不会把 BA 等自定义 .label 文件混入 aparc 列表。
+    """
+    src_labels = {'lh': {}, 'rh': {}}
+    label_source_map = {'lh': {}, 'rh': {}}
+    src_vertices, src_vertno_to_idx = _src_vertex_maps(loaded_src)
+
+    aparc_loaded = _load_aparc_from_annot(
+        subjects_dir, subject, src_vertices, src_vertno_to_idx,
+        src_labels, label_source_map,
+    )
+    if not aparc_loaded:
+        _load_aparc_from_label_files(
+            subjects_dir, subject, src_vertices, src_vertno_to_idx,
+            src_labels, label_source_map,
+        )
+
+    _load_a2009s_from_annot(
+        subjects_dir, subject, src_vertices, src_vertno_to_idx,
+        src_labels, label_source_map,
+    )
+
+    return src_labels, label_source_map
+
+
 def load_forward_model(file_path):
     """加载正向模型
     
