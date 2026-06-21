@@ -53,7 +53,10 @@ class ProjectManager:
                 "bem": {},
                 "selected_channels": [],
                 "electrode_montage": None,
-                "source_space": {}
+                "source_space": {},
+                "output": {},
+                "signal_filter": {},
+                "mne_coupling": {},
             }
             
             # 保存到单个 JSON 文件
@@ -135,6 +138,15 @@ class ProjectManager:
             
             if "source_space" in project_data:
                 existing_data["source_space"] = cls._convert_to_json_serializable(project_data["source_space"])
+
+            if "output" in project_data:
+                existing_data["output"] = project_data["output"]
+
+            if "signal_filter" in project_data:
+                existing_data["signal_filter"] = project_data["signal_filter"]
+
+            if "mne_coupling" in project_data:
+                existing_data["mne_coupling"] = project_data["mne_coupling"]
             
             # 保存到单个 JSON 文件
             with open(meta_path, 'w', encoding='utf-8') as f:
@@ -177,7 +189,10 @@ class ProjectManager:
                 "bem": {},
                 "selected_channels": [],
                 "electrode_montage": None,
-                "source_space": {}
+                "source_space": {},
+                "output": {},
+                "signal_filter": {},
+                "mne_coupling": {},
             }
             
             for key, default_value in default_data.items():

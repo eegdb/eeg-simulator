@@ -1,5 +1,7 @@
 """输出设置页面 - NavigationView 布局"""
 
+import os
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QComboBox, QDoubleSpinBox, QLineEdit,
                              QPushButton, QFrame)
@@ -354,6 +356,50 @@ class OutputPage(NavigationPage):
             'filename': self._filename if fmt in ('edf', 'fif') else '',
             'device_name': self._device_name if fmt == 'lsl' else 'EEGSimulator',
         }
+
+    def apply_output_config(self, config: dict):
+        """从项目数据恢复输出配置"""
+        if not config:
+            return
+
+        fmt = config.get('format', 'lsl')
+        idx = self.output_combo.findData(fmt)
+        if idx >= 0:
+            self.output_combo.blockSignals(True)
+            self.output_combo.setCurrentIndex(idx)
+            self.output_combo.blockSignals(False)
+            self._init_output_config_ui()
+
+        self._filename = config.get('filename', '') or ''
+        self._device_name = config.get('device_name', '') or 'EEGSimulator'
+        output_dir = config.get('output_dir')
+        self.output_dir = output_dir if output_dir and os.path.isdir(output_dir) else None
+
+        self.duration_spin.setValue(float(config.get('duration', 0)))
+        if 'sampling_rate' in config:
+            self.sr_spin.blockSignals(True)
+            self.sr_spin.setValue(float(config['sampling_rate']))
+            self.sr_spin.blockSignals(False)
+
+        if hasattr(self, 'filename_input'):
+            self.filename_input.setText(self._filename)
+        if hasattr(self, 'device_name_input'):
+            self.device_name_input.setText(self._device_name)
+        if hasattr(self, 'output_dir_label'):
+            if self.output_dir:
+                display = (
+                    self.output_dir if len(self.output_dir) < 30
+                    else '...' + self.output_dir[-27:]
+                )
+                self.output_dir_label.setText(display)
+                self.output_dir_label.setStyleSheet(
+                    f"color: {get_color('text_main')}; font-size: 12px;"
+                )
+            else:
+                self.output_dir_label.setText(tr('output_dir_not_set'))
+                self.output_dir_label.setStyleSheet(
+                    f"color: {get_color('text_muted')}; font-size: 12px;"
+                )
 
 
     def update_theme(self):

@@ -98,11 +98,6 @@ class EEGSimulator(QMainWindow):
         self.time_buffer = np.zeros(self.buffer_size)
         self.signal_buffer = {}
         self.eeg_buffer = {}
-        self.export_data = {}
-        
-        # 实时保存相关
-        self.temp_files = {}
-        self._samples_per_channel = {}
         self._output_sink: Optional[SimulationOutputSink] = None
         
         # 实时滤波状态存储 {channel_name: {'hp': zi_hp, 'lp': zi_lp, 'notch': zi_notch}}
@@ -121,6 +116,10 @@ class EEGSimulator(QMainWindow):
 
         # 选中的导联列表
         self.selected_channels = []
+        self._saved_electrode_montage = None
+        self._saved_output_config = {}
+        self._saved_signal_filter = {}
+        self._saved_mne_coupling = {}
         
         # EEG通道名称映射 (标准10-20命名 -> MNE前向模型命名)
         self.eeg_channel_mapping = {}
@@ -1453,10 +1452,27 @@ class EEGSimulator(QMainWindow):
             "couplings": couplings_data,
             "noise": self.noise_configs,
             "bem": self._serialize_bem_config(),
-            "config": {"sampling_rate": self.sampling_rate},
+            "config": {
+                "sampling_rate": (
+                    self.output_page.sr_spin.value()
+                    if hasattr(self, 'output_page') else self.sampling_rate
+                ),
+            },
             "selected_channels": selected_channels,
             "electrode_montage": electrode_montage,
-            "source_space": src_info
+            "source_space": src_info,
+            "output": (
+                self.output_page.get_output_config()
+                if hasattr(self, 'output_page') else {}
+            ),
+            "signal_filter": (
+                self.signal_page.get_filter_params()
+                if hasattr(self, 'signal_page') else {}
+            ),
+            "mne_coupling": (
+                self.source_page.get_mne_coupling_settings()
+                if hasattr(self, 'source_page') else {}
+            ),
         }
         
         if ProjectManager.save_project(project_path, project_data):
@@ -1511,7 +1527,13 @@ class EEGSimulator(QMainWindow):
         self.bem_conductivity = self._normalize_bem_conductivity(
             data.get("bem", {}).get("conductivity")
         )
-        self.sampling_rate = data.get("config", {}).get("sampling_rate", 1000)
+        self._saved_output_config = data.get("output") or {}
+        self._saved_signal_filter = data.get("signal_filter") or {}
+        self._saved_mne_coupling = data.get("mne_coupling") or {}
+        if self._saved_output_config.get('sampling_rate') is not None:
+            self.sampling_rate = float(self._saved_output_config['sampling_rate'])
+        else:
+            self.sampling_rate = data.get("config", {}).get("sampling_rate", 1000)
         self.selected_channels = data.get("selected_channels", [])
         self._saved_electrode_montage = (
             data.get("electrode_montage")
@@ -1545,8 +1567,8 @@ class EEGSimulator(QMainWindow):
             if src_filename and self.source_page.subject:
                 self._reload_source_space(src_filename, self.source_page.subject, src_info)
         
-        self._init_signal_buffers()
         self._update_ui_from_data()
+        self._init_signal_buffers()
         self._update_window_title()
         self._update_status_bar()
         
@@ -1644,6 +1666,11 @@ class EEGSimulator(QMainWindow):
         self._coupling_engine.clear()
         self.bem_model = None
         self.bem_conductivity = None
+        self.selected_channels = []
+        self._saved_electrode_montage = None
+        self._saved_output_config = {}
+        self._saved_signal_filter = {}
+        self._saved_mne_coupling = {}
         self._update_ui_from_data()
 
     def _update_ui_from_data(self):
@@ -1658,10 +1685,26 @@ class EEGSimulator(QMainWindow):
             self.source_page._update_noise_stats()
             if self.bem_conductivity and hasattr(self.source_page, 'apply_bem_conductivity'):
                 self.source_page.apply_bem_conductivity(self.bem_conductivity)
+            saved_mne = getattr(self, '_saved_mne_coupling', None)
+            if saved_mne:
+                self.source_page.apply_mne_coupling_settings(saved_mne)
         
         # 更新输出页面
         if hasattr(self, 'output_page'):
-            self.output_page.sr_spin.setValue(self.sampling_rate)
+            saved_output = getattr(self, '_saved_output_config', None)
+            if saved_output:
+                self.output_page.apply_output_config(saved_output)
+                self.sampling_rate = self.output_page.sr_spin.value()
+            else:
+                self.output_page.sr_spin.setValue(self.sampling_rate)
+
+        # 恢复信号滤波参数
+        if hasattr(self, 'signal_page'):
+            saved_filter = getattr(self, '_saved_signal_filter', None)
+            if saved_filter:
+                self.signal_page.apply_filter_params(saved_filter)
+            if not self.is_running:
+                self._resize_signal_buffers()
         
         # 更新电极通道页面
         if hasattr(self, 'electrode_channels_page'):

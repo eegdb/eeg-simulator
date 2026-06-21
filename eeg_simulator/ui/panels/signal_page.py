@@ -338,6 +338,25 @@ class SignalPage(NavigationPage):
             'time_window': self.time_window_spin.value(),
         }
 
+    def apply_filter_params(self, params: dict):
+        """从项目数据恢复滤波参数"""
+        if not params:
+            return
+        if 'highpass' in params:
+            self.highpass_spin.setValue(float(params['highpass']))
+        if 'lowpass' in params:
+            self.lowpass_spin.setValue(float(params['lowpass']))
+        if 'notch' in params:
+            self.notch_cb.setChecked(bool(params['notch']))
+        if 'notch_freq' in params:
+            freq = float(params['notch_freq'])
+            idx = self.notch_freq_combo.findData(freq)
+            if idx >= 0:
+                self.notch_freq_combo.setCurrentIndex(idx)
+        if 'time_window' in params:
+            self.time_window_spin.setValue(float(params['time_window']))
+        self.notch_freq_combo.setEnabled(self.notch_cb.isChecked())
+
 
     def update_heatmap(self, channel_activities):
         """更新热力图"""

@@ -495,6 +495,26 @@ class SourceConfigPage(NavigationPage):
     def _on_mne_coupling_toggled(self, state):
         """MNE耦合开关切换"""
         self.parent_simulator._use_mne_coupling = (state == 2)
+
+    def get_mne_coupling_settings(self) -> dict:
+        return {
+            'use_mne': self.mne_coupling_check.isChecked(),
+            'knn_k': self.knn_spin.value(),
+            'decay_length': self.decay_spin.value(),
+        }
+
+    def apply_mne_coupling_settings(self, settings: dict):
+        if not settings:
+            return
+        if 'use_mne' in settings:
+            self.mne_coupling_check.setChecked(bool(settings['use_mne']))
+            self.parent_simulator._use_mne_coupling = bool(settings['use_mne'])
+        if 'knn_k' in settings:
+            self.knn_spin.setValue(int(settings['knn_k']))
+        if 'decay_length' in settings:
+            self.decay_spin.setValue(float(settings['decay_length']))
+        if hasattr(self.parent_simulator, 'invalidate_mne_coupling_cache'):
+            self.parent_simulator.invalidate_mne_coupling_cache()
     
     def _on_manage_coupling(self):
         """打开耦合管理"""

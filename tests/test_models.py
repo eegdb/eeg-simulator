@@ -5,13 +5,13 @@ import numpy as np
 
 import sys
 import os
+import importlib.util
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from eeg_simulator.models import Dipole, SignalGenerator, CouplingModel
 from eeg_simulator.models.coupling import PatchCouplingEngine
 from eeg_simulator.models.patch import Patch
 
-import importlib.util
 _wp_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'eeg_simulator', 'utils', 'waveform_parser.py')
 _wp_spec = importlib.util.spec_from_file_location('waveform_parser', _wp_path)

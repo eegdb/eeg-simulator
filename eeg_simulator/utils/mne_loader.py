@@ -19,6 +19,10 @@ import os
 import mne
 import numpy as np
 
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 # FreeSurfer Desikan-Killiany (aparc) 皮层分区名称
 APARC_REGIONS = frozenset({
@@ -355,6 +359,6 @@ def load_atlas_labels(subject, subjects_dir, atlas='aparc'):
             
             labels[hemi][label_name] = label.vertices.tolist()
         except Exception as e:
-            print(f"读取标签失败 {fname}: {e}")
+            logger.warning(f"读取标签失败 {fname}: {e}")
     
     return labels

@@ -16,6 +16,9 @@ from PyQt6.QtGui import QPixmap, QImage
 
 from ..styles import COLORS
 from ...utils import tr
+from ...utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class HeatmapOverlayWidget(QWidget):
@@ -112,7 +115,7 @@ class HeatmapOverlayWidget(QWidget):
             self.update()
             
         except Exception as e:
-            print(f"绘制热力图失败: {e}")
+            logger.warning(f"绘制热力图失败: {e}")
             # 如果失败，尝试使用简化的绘制方法
             self._update_plot_simple()
     
@@ -187,7 +190,7 @@ class HeatmapOverlayWidget(QWidget):
             self.update()
             
         except Exception as e2:
-            print(f"简化地形图绘制也失败: {e2}")
+            logger.warning(f"简化地形图绘制也失败: {e2}")
             self._pixmap = None
     
     def paintEvent(self, event):
@@ -260,7 +263,7 @@ class HeatmapOverlayWidget(QWidget):
             montage = mne.channels.make_standard_montage(montage_name)
             self.set_montage(montage)
         except Exception as e:
-            print(f"设置 montage 失败: {e}")
+            logger.warning(f"设置 montage 失败: {e}")
     
     def _draw_head_outline(self, ax):
         """绘制头部轮廓（已禁用 - 无轮廓模式）"""
@@ -318,7 +321,7 @@ class HeatmapOverlayWidget(QWidget):
             self.update()
             
         except Exception as e:
-            print(f"绘制默认状态失败: {e}")
+            logger.warning(f"绘制默认状态失败: {e}")
             self._pixmap = None
 
 
@@ -391,7 +394,7 @@ class HeadLayoutWidget(QWidget):
             self._update_plot()
             return True
         except Exception as e:
-            print(f"加载 montage 失败 {montage_name}: {e}")
+            logger.warning(f"加载 montage 失败 {montage_name}: {e}")
             return False
 
     def set_show_labels(self, show):
@@ -446,7 +449,7 @@ class HeadLayoutWidget(QWidget):
             self.update()
             
         except Exception as e:
-            print(f"绘制 montage 失败: {e}")
+            logger.warning(f"绘制 montage 失败: {e}")
             import traceback
             traceback.print_exc()
 
