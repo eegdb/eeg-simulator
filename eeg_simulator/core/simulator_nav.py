@@ -106,6 +106,10 @@ class EEGSimulator(QMainWindow):
 
         # 简化投影的确定性权重（不使用全局 RNG）
         self.mne_fwd_path = None
+        self._mne_coupling_factor_cache = None
+        self._mne_coupling_factor_cache_key = None
+        self._last_fft_update_time = 0.0
+        self._fft_update_interval = 0.5  # 秒（仿真时间）
 
         # 选中的导联列表
         self.selected_channels = []
@@ -407,6 +411,7 @@ class EEGSimulator(QMainWindow):
 
         # 重置耦合延迟缓冲
         self._coupling_engine.reset_histories()
+        self._last_fft_update_time = 0.0
         
         # 更新UI
         self.status_run.setText("● " + tr('status_running'))
@@ -545,13 +550,17 @@ class EEGSimulator(QMainWindow):
         """批量应用耦合"""
         dt = 1.0 / self.sampling_rate
         coupled_signals = {}
+        mne_factors = (
+            self._get_mne_coupling_factors()
+            if self._use_mne_coupling and self._mne_coupling_engine is not None
+            else None
+        )
         
         for i in range(n_samples):
             current_signals = {pid: signals[i] for pid, signals in patch_signals.items()}
             
-            # 应用MNE耦合
-            if self._use_mne_coupling and self._mne_coupling_engine is not None:
-                current_signals = self._apply_mne_coupling(current_signals)
+            if mne_factors is not None:
+                current_signals = self._apply_mne_coupling_factors(current_signals, mne_factors)
             elif self._coupling_models:
                 current_time = self.simulation_time + i * dt
                 current_signals = self._coupling_engine.compute_coupled_signals(current_signals, current_time)
@@ -567,45 +576,91 @@ class EEGSimulator(QMainWindow):
         
         return coupled_signals
 
-    def _apply_mne_coupling(self, patch_signals):
-        """应用MNE耦合"""
+    def _patches_geometry_signature(self):
+        """Patch 偶极子几何签名，用于 MNE 耦合权重缓存失效"""
+        parts = []
+        for patch_id in sorted(self.patches.keys()):
+            patch = self.patches[patch_id]
+            verts = tuple(sorted(
+                (d.hemi, d.vertno) for d in patch.dipoles
+                if getattr(d, 'vertno', None) is not None and getattr(d, 'hemi', None)
+            ))
+            parts.append((patch_id, verts))
+        return tuple(parts)
+
+    def invalidate_mne_coupling_cache(self):
+        """清除 MNE 耦合几何权重缓存"""
+        self._mne_coupling_factor_cache = None
+        self._mne_coupling_factor_cache_key = None
+
+    def _get_mne_coupling_factors(self):
+        """预计算 MNE 耦合因子（几何权重 × 强度），每帧只算一次"""
         if self._mne_coupling_engine is None or not self._coupling_models:
-            return patch_signals
-        
+            return []
+
         k = self.source_page.knn_spin.value() if hasattr(self, 'source_page') else 3
         decay_length = self.source_page.decay_spin.value() if hasattr(self, 'source_page') else 0.02
-        
-        coupled_signals = patch_signals.copy()
-        
+        coupling_sig = tuple(
+            (cid, c.source_patch_id, c.target_patch_id, c.strength)
+            for cid, c in sorted(self._coupling_models.items())
+        )
+        cache_key = (k, decay_length, self._patches_geometry_signature(), coupling_sig)
+
+        if self._mne_coupling_factor_cache_key == cache_key and self._mne_coupling_factor_cache is not None:
+            return self._mne_coupling_factor_cache
+
+        factors = []
         for coupling_id, coupling in self._coupling_models.items():
             source_id = coupling.source_patch_id
             target_id = coupling.target_patch_id
-            
+
             if source_id not in self.patches or target_id not in self.patches:
                 continue
-            
+
             source_patch = self.patches[source_id]
             target_patch = self.patches[target_id]
-            
-            source_dipoles = [{'hemi': d.hemi, 'vertno': d.vertno, 'position': d.position}
-                            for d in source_patch.dipoles if hasattr(d, 'hemi') and hasattr(d, 'vertno')]
-            target_dipoles = [{'hemi': d.hemi, 'vertno': d.vertno, 'position': d.position}
-                            for d in target_patch.dipoles if hasattr(d, 'hemi') and hasattr(d, 'vertno')]
-            
+
+            source_dipoles = [
+                {'hemi': d.hemi, 'vertno': d.vertno, 'position': d.position}
+                for d in source_patch.dipoles
+                if getattr(d, 'hemi', None) is not None and getattr(d, 'vertno', None) is not None
+            ]
+            target_dipoles = [
+                {'hemi': d.hemi, 'vertno': d.vertno, 'position': d.position}
+                for d in target_patch.dipoles
+                if getattr(d, 'hemi', None) is not None and getattr(d, 'vertno', None) is not None
+            ]
+
             if not source_dipoles or not target_dipoles:
                 continue
-            
+
             mne_coupling = self._mne_coupling_engine.compute_inter_patch_coupling(
                 source_id, target_id,
                 {'dipoles': source_dipoles},
                 {'dipoles': target_dipoles},
-                k=k, decay_length=decay_length
+                k=k, decay_length=decay_length,
             )
-            
-            if target_id in coupled_signals and source_id in coupled_signals:
-                coupled_signals[target_id] += mne_coupling * coupled_signals[source_id] * coupling.strength
-        
+            factors.append((source_id, target_id, mne_coupling * coupling.strength))
+
+        self._mne_coupling_factor_cache = factors
+        self._mne_coupling_factor_cache_key = cache_key
+        return factors
+
+    @staticmethod
+    def _apply_mne_coupling_factors(patch_signals, factors):
+        """按耦合顺序将预计算的 MNE 因子应用到当前样本"""
+        coupled_signals = patch_signals.copy()
+        for source_id, target_id, factor in factors:
+            if source_id in coupled_signals and target_id in coupled_signals:
+                coupled_signals[target_id] += factor * coupled_signals[source_id]
         return coupled_signals
+
+    def _apply_mne_coupling(self, patch_signals):
+        """应用MNE耦合（单样本，保留供外部调用）"""
+        factors = self._get_mne_coupling_factors()
+        if not factors:
+            return patch_signals
+        return self._apply_mne_coupling_factors(patch_signals, factors)
 
     def _project_to_electrodes_batch(self, patch_signals, n_samples):
         """批量投影到电极"""
@@ -842,8 +897,10 @@ class EEGSimulator(QMainWindow):
                 data = self.eeg_buffer[ch_name][-n_samples:].copy()
                 self.signal_page.plot_curves[ch_name].setData(t_display, data)
         
-        # 更新FFT频谱
-        self._update_fft_spectrum(n_samples)
+        # 更新FFT频谱（节流，降低 CPU 占用）
+        if self.simulation_time - self._last_fft_update_time >= self._fft_update_interval:
+            self._update_fft_spectrum(n_samples)
+            self._last_fft_update_time = self.simulation_time
     
     def _init_filter_states(self):
         """初始化实时滤波状态和系数
@@ -858,6 +915,7 @@ class EEGSimulator(QMainWindow):
         highpass = filter_params.get('highpass', 0)
         lowpass = filter_params.get('lowpass', 0)
         notch = filter_params.get('notch', False)
+        notch_freq = filter_params.get('notch_freq', 50.0)
         
         # 获取滤波阶数配置
         hp_order = self.config.get('filter_highpass_order', 4)
@@ -880,7 +938,7 @@ class EEGSimulator(QMainWindow):
         # 陷波滤波系数
         if notch:
             q_value = 15 * notch_order
-            b, a = sp_signal.iirnotch(50, q_value, fs=self.sampling_rate)
+            b, a = sp_signal.iirnotch(notch_freq, q_value, fs=self.sampling_rate)
             coeffs['notch'] = (b, a)
         
         self._filter_coeffs = coeffs
@@ -905,7 +963,10 @@ class EEGSimulator(QMainWindow):
             
             self._filter_states[ch_name] = states
         
-        logger.info(f"实时滤波器已初始化: HP={highpass}Hz, LP={lowpass}Hz, Notch={notch}")
+        logger.info(
+            f"实时滤波器已初始化: HP={highpass}Hz, LP={lowpass}Hz, "
+            f"Notch={notch} ({notch_freq}Hz)"
+        )
     
     def _apply_filter(self, data, ch_name):
         """应用实时有状态滤波
@@ -1035,6 +1096,7 @@ class EEGSimulator(QMainWindow):
                 src=src, labels=labels, sampling_rate=self.sampling_rate
             )
             logger.info("MNE耦合引擎初始化成功")
+            self.invalidate_mne_coupling_cache()
         except Exception as e:
             logger.error(f"MNE耦合引擎初始化失败: {e}")
             self._mne_coupling_engine = None
@@ -1654,6 +1716,7 @@ class EEGSimulator(QMainWindow):
         patch.set_radius(radius)
         self.patches[patch_id] = patch
         self._current_patch_id = patch_id
+        self.invalidate_mne_coupling_cache()
         
         return patch_id
 
@@ -1672,6 +1735,7 @@ class EEGSimulator(QMainWindow):
             self._current_patch_id = None
         
         logger.info(f"删除Patch: {patch_id}")
+        self.invalidate_mne_coupling_cache()
 
     def modify_patch(self, patch_id, name=None, waveform_type=None, waveform_params=None, radius=None):
         """修改 Patch
@@ -1697,6 +1761,7 @@ class EEGSimulator(QMainWindow):
             patch.radius = radius
         
         logger.info(f"修改Patch: {patch_id}")
+        self.invalidate_mne_coupling_cache()
 
     def create_dipole(self, position, orientation, hemi=None, vertno=None, src_idx=None):
         """创建偶极子（不放入任何 Patch，用于 PatchManager 中临时创建）
@@ -1800,6 +1865,7 @@ class EEGSimulator(QMainWindow):
         self._coupling_engine.add_coupling(coupling)
         
         logger.info(f"创建耦合模型: {coupling_id}")
+        self.invalidate_mne_coupling_cache()
         return coupling_id
 
     def delete_coupling_model(self, coupling_id):
@@ -1808,6 +1874,7 @@ class EEGSimulator(QMainWindow):
             del self._coupling_models[coupling_id]
             self._coupling_engine.remove_coupling(coupling_id)
             logger.info(f"删除耦合模型: {coupling_id}")
+            self.invalidate_mne_coupling_cache()
 
     def modify_coupling_model(self, coupling_id, strength=None, delay=None, type=None):
         """修改已有耦合模型的参数（保持 ID 不变）"""
@@ -1825,10 +1892,12 @@ class EEGSimulator(QMainWindow):
             coupling.reset_history()
 
         logger.info(f"修改耦合模型: {coupling_id}")
+        self.invalidate_mne_coupling_cache()
         return True
 
     def clear_coupling_models(self):
         """清除所有耦合模型"""
         self._coupling_models.clear()
         self._coupling_engine.clear()
+        self.invalidate_mne_coupling_cache()
         logger.info("已清除所有耦合模型")

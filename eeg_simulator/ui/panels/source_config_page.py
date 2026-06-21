@@ -264,6 +264,13 @@ class SourceConfigPage(NavigationPage):
         layout.addWidget(self.coupling_group)
         
         layout.addStretch()
+
+        self.knn_spin.valueChanged.connect(self._on_mne_coupling_params_changed)
+        self.decay_spin.valueChanged.connect(self._on_mne_coupling_params_changed)
+    
+    def _on_mne_coupling_params_changed(self):
+        if hasattr(self.parent_simulator, 'invalidate_mne_coupling_cache'):
+            self.parent_simulator.invalidate_mne_coupling_cache()
     
     def _populate_src_combo(self):
         """填充src文件选择下拉框"""

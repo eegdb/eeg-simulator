@@ -8,6 +8,10 @@ from pathlib import Path
 
 import numpy as np
 
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class ProjectManager:
     """项目管理器"""
@@ -57,7 +61,7 @@ class ProjectManager:
             
             return True
         except Exception as e:
-            print(f"创建项目失败: {e}")
+            logger.error(f"创建项目失败: {e}")
             return False
     
     @classmethod
@@ -81,8 +85,7 @@ class ProjectManager:
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         existing_data = json.load(f)
                 except (json.JSONDecodeError, Exception) as e:
-                    # 文件损坏或读取失败，使用默认数据
-                    print(f"Warning: Failed to read {meta_path}: {e}")
+                    logger.warning(f"Failed to read {meta_path}: {e}")
             
             if existing_data is None:
                 existing_data = {
@@ -135,9 +138,7 @@ class ProjectManager:
             
             return True
         except Exception as e:
-            print(f"保存项目失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"保存项目失败: {e}", exc_info=True)
             return False
     
     @classmethod
@@ -154,7 +155,7 @@ class ProjectManager:
             meta_path = os.path.join(project_path, cls.META_FILE)
             
             if not os.path.exists(meta_path):
-                print(f"项目文件不存在: {meta_path}")
+                logger.error(f"项目文件不存在: {meta_path}")
                 return None
             
             with open(meta_path, 'r', encoding='utf-8') as f:
@@ -180,9 +181,7 @@ class ProjectManager:
             
             return data
         except Exception as e:
-            print(f"加载项目失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"加载项目失败: {e}", exc_info=True)
             return None
     
     @classmethod

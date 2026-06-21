@@ -144,7 +144,7 @@ class MNESimulator:
                         logger.debug(f"Patch signal range: [{np.min(signals):.2e}, {np.max(signals):.2e}], "
                                    f"amp_scale={patch_amp_scale}, dipole_amp={amplitude}")
                     
-                    source_data[data_idx, :] = signals * amplitude * patch_amp_scale
+                    source_data[data_idx, :] += signals * amplitude * patch_amp_scale
         
         # 调试信息
         non_zero = np.count_nonzero(source_data)

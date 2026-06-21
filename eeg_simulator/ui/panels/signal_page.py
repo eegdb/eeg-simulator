@@ -116,6 +116,11 @@ class SignalPage(NavigationPage):
         self.notch_cb = QCheckBox(tr('label_notch_filter'))
         self.notch_cb.setChecked(True)
         filter_layout.addWidget(self.notch_cb)
+        self.notch_freq_combo = QComboBox()
+        self.notch_freq_combo.addItem('50 Hz', 50.0)
+        self.notch_freq_combo.addItem('60 Hz', 60.0)
+        self.notch_freq_combo.setEnabled(True)
+        filter_layout.addWidget(self.notch_freq_combo)
         
         filter_layout.addStretch()
         
@@ -135,6 +140,10 @@ class SignalPage(NavigationPage):
         self.highpass_spin.valueChanged.connect(self.filter_changed.emit)
         self.lowpass_spin.valueChanged.connect(self.filter_changed.emit)
         self.notch_cb.stateChanged.connect(self.filter_changed.emit)
+        self.notch_freq_combo.currentIndexChanged.connect(self.filter_changed.emit)
+        self.notch_cb.stateChanged.connect(
+            lambda _: self.notch_freq_combo.setEnabled(self.notch_cb.isChecked())
+        )
         
         # ========== 波形显示区域 + 热力图 ==========
         self.viz_group = QGroupBox(tr('panel_realtime_signal'))
@@ -325,6 +334,7 @@ class SignalPage(NavigationPage):
             'highpass': self.highpass_spin.value(),
             'lowpass': self.lowpass_spin.value(),
             'notch': self.notch_cb.isChecked(),
+            'notch_freq': float(self.notch_freq_combo.currentData()),
             'time_window': self.time_window_spin.value(),
         }
 
