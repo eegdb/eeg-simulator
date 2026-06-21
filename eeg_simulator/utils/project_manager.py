@@ -52,6 +52,7 @@ class ProjectManager:
                 "noise": [],
                 "bem": {},
                 "selected_channels": [],
+                "electrode_montage": None,
                 "source_space": {}
             }
             
@@ -128,6 +129,9 @@ class ProjectManager:
             
             if "selected_channels" in project_data:
                 existing_data["selected_channels"] = project_data["selected_channels"]
+
+            if "electrode_montage" in project_data:
+                existing_data["electrode_montage"] = project_data["electrode_montage"]
             
             if "source_space" in project_data:
                 existing_data["source_space"] = cls._convert_to_json_serializable(project_data["source_space"])
@@ -172,6 +176,7 @@ class ProjectManager:
                 "noise": [],
                 "bem": {},
                 "selected_channels": [],
+                "electrode_montage": None,
                 "source_space": {}
             }
             

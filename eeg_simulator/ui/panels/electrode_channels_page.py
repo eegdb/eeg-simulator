@@ -194,7 +194,11 @@ class ElectrodeChannelsPage(NavigationPage):
         return self.head_selector.get_head_widget()
     
     def _update_channel_list(self):
-        """更新通道列表"""
+        """更新通道列表（保留当前已选通道）"""
+        saved_selection = []
+        if hasattr(self.parent_simulator, 'selected_channels'):
+            saved_selection = list(self.parent_simulator.selected_channels)
+
         head_widget = self.get_head_widget()
         montage = head_widget._montage if hasattr(head_widget, '_montage') else None
         
@@ -207,11 +211,11 @@ class ElectrodeChannelsPage(NavigationPage):
             item = QListWidgetItem(ch_name)
             self.channel_list.addItem(item)
         
-        self._update_stats()
-        
-        # 更新父级的通道列表
-        if hasattr(self.parent_simulator, 'selected_channels'):
-            self.parent_simulator.selected_channels = []
+        if saved_selection:
+            valid = [ch for ch in saved_selection if ch in channel_names]
+            self.set_selected_channels(valid)
+        else:
+            self._update_stats()
     
     def get_selected_channels(self):
         """获取选中的通道"""
@@ -227,7 +231,20 @@ class ElectrodeChannelsPage(NavigationPage):
             if item.text() in channel_names:
                 item.setSelected(True)
         
+        if hasattr(self.parent_simulator, 'selected_channels'):
+            self.parent_simulator.selected_channels = self.get_selected_channels()
         self._update_stats()
+
+    def get_montage_key(self):
+        """当前电极布局 key（MNE montage 名称）"""
+        if hasattr(self, 'head_selector') and hasattr(self.head_selector, 'combo'):
+            return self.head_selector.combo.currentData()
+        return None
+
+    def set_montage_key(self, montage_key):
+        """恢复电极布局"""
+        if montage_key and hasattr(self, 'head_selector'):
+            self.head_selector.set_montage(montage_key)
     
     def _select_all_channels(self):
         """全选通道"""

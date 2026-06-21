@@ -435,6 +435,24 @@ class Translator(QObject):
             'msg_no_patches': '请先创建至少一个 Patch',
             'msg_no_forward_model': '未加载前向模型，将使用简化投影（结果仅供预览，非真实头皮电位）。',
             'msg_output_not_implemented': '{} 文件/流输出尚未实现，当前仅支持实时显示。',
+            'msg_output_dir_required': '请先选择输出目录（EDF/FIFF 格式需要）。',
+            'msg_output_dir_invalid': '输出目录不存在或无效，请重新选择。',
+            'msg_output_filename_required': '请输入输出文件名。',
+            'msg_pylsl_not_installed': 'LSL 输出需要 pylsl 库，请运行: pip install pylsl',
+            'msg_output_start_failed': '无法启动输出: {}',
+            'msg_output_stop_failed': '保存输出文件时出错: {}',
+            'msg_output_file_saved': '数据已保存至:\n{}',
+            'msg_output_duration_confirm_title': '输出时长确认',
+            'msg_output_duration_unlimited_confirm': (
+                '文件输出未限制时长（可无限录制）。\n'
+                '录制超过 1 小时将占用大量磁盘空间。\n\n'
+                '是否确认继续？'
+            ),
+            'msg_output_duration_long_confirm': (
+                '输出时长为 {}（超过 1 小时）。\n'
+                '可能占用大量磁盘空间。\n\n'
+                '是否确认继续？'
+            ),
             'panel_head_layout': '热力图',
             'label_layout': '电极布局',
             'msg_confirm_delete_dipole': '确定要删除偶极子 {} 吗？',
@@ -898,6 +916,24 @@ class Translator(QObject):
             'msg_no_patches': 'Please create at least one Patch first',
             'msg_no_forward_model': 'No forward model loaded. Simplified projection will be used (preview only, not realistic scalp potentials).',
             'msg_output_not_implemented': '{} file/stream output is not implemented yet. Only real-time display is available.',
+            'msg_output_dir_required': 'Please select an output directory (required for EDF/FIFF).',
+            'msg_output_dir_invalid': 'Output directory does not exist or is invalid.',
+            'msg_output_filename_required': 'Please enter an output filename.',
+            'msg_pylsl_not_installed': 'LSL output requires pylsl. Install with: pip install pylsl',
+            'msg_output_start_failed': 'Failed to start output: {}',
+            'msg_output_stop_failed': 'Error saving output file: {}',
+            'msg_output_file_saved': 'Data saved to:\n{}',
+            'msg_output_duration_confirm_title': 'Confirm Output Duration',
+            'msg_output_duration_unlimited_confirm': (
+                'File output duration is unlimited.\n'
+                'Recordings over 1 hour may use significant disk space.\n\n'
+                'Continue anyway?'
+            ),
+            'msg_output_duration_long_confirm': (
+                'Output duration is {} (> 1 hour).\n'
+                'This may use significant disk space.\n\n'
+                'Continue anyway?'
+            ),
             'msg_select_center_dipole': 'Please select a center dipole first',
             'msg_select_label': 'Please select a Label first',
             'msg_dipole_already_in_patch': 'Dipole {} is already in another Patch',

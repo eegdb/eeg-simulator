@@ -7,5 +7,6 @@ pyqtgraph>=0.13.0
 matplotlib>=3.5.0
 nibabel==5.4.0
 pyedflib==0.1.42
+pylsl>=1.16.0
 # 测试依赖
 pytest>=7.0.0

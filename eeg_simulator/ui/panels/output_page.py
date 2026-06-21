@@ -40,6 +40,8 @@ class OutputPage(NavigationPage):
         )
         
         self.output_dir = None
+        self._filename = ''
+        self._device_name = 'EEGSimulator'
         self._setup_content()
     
     def _setup_content(self):
@@ -144,6 +146,8 @@ class OutputPage(NavigationPage):
     
     def _init_output_config_ui(self):
         """初始化输出配置UI"""
+        self._sync_filename_from_ui()
+        self._sync_device_name_from_ui()
         self._clear_output_config()
         
         output_format = self.output_combo.currentData()
@@ -170,11 +174,23 @@ class OutputPage(NavigationPage):
             name_layout.addWidget(self.filename_label)
             self.filename_input = QLineEdit()
             self.filename_input.setPlaceholderText(tr('placeholder_filename'))
+            self.filename_input.setText(self._filename)
+            self.filename_input.textChanged.connect(
+                lambda text: setattr(self, '_filename', text)
+            )
             name_layout.addWidget(self.filename_input)
             file_layout.addLayout(name_layout)
             
             self.output_config_layout.addLayout(file_layout)
-            self.output_dir = None
+            if self.output_dir:
+                display_path = (
+                    self.output_dir if len(self.output_dir) < 30
+                    else '...' + self.output_dir[-27:]
+                )
+                self.output_dir_label.setText(display_path)
+                self.output_dir_label.setStyleSheet(
+                    f"color: {get_color('text_main')}; font-size: 12px;"
+                )
             
         elif output_format == 'lsl':
             # LSL输出配置
@@ -184,13 +200,23 @@ class OutputPage(NavigationPage):
             
             self.device_name_input = QLineEdit()
             self.device_name_input.setPlaceholderText(tr('placeholder_device_name'))
-            self.device_name_input.setText('EEGSimulator')
+            self.device_name_input.setText(self._device_name)
+            self.device_name_input.textChanged.connect(
+                lambda text: setattr(self, '_device_name', text or 'EEGSimulator')
+            )
             lsl_layout.addWidget(self.device_name_input)
             
             self.output_config_layout.addLayout(lsl_layout)
     
     def _clear_output_config(self):
         """清空输出配置区域"""
+        for attr in (
+            'filename_input', 'filename_label', 'output_dir_label',
+            'select_dir_btn', 'device_name_input', 'device_name_label',
+        ):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
         while self.output_config_layout.count():
             item = self.output_config_layout.takeAt(0)
             if item.widget():
@@ -200,6 +226,22 @@ class OutputPage(NavigationPage):
                     child = item.layout().takeAt(0)
                     if child.widget():
                         child.widget().deleteLater()
+
+    def _sync_filename_from_ui(self):
+        widget = getattr(self, 'filename_input', None)
+        if widget is not None:
+            try:
+                self._filename = widget.text()
+            except RuntimeError:
+                pass
+
+    def _sync_device_name_from_ui(self):
+        widget = getattr(self, 'device_name_input', None)
+        if widget is not None:
+            try:
+                self._device_name = widget.text() or 'EEGSimulator'
+            except RuntimeError:
+                pass
     
     def _on_output_format_changed(self, index):
         """输出格式改变"""
@@ -301,13 +343,16 @@ class OutputPage(NavigationPage):
     
     def get_output_config(self):
         """获取输出配置"""
+        self._sync_filename_from_ui()
+        self._sync_device_name_from_ui()
+        fmt = self.output_combo.currentData()
         return {
-            'format': self.output_combo.currentData(),
+            'format': fmt,
             'sampling_rate': self.sr_spin.value(),
             'duration': self.duration_spin.value(),
             'output_dir': self.output_dir,
-            'filename': getattr(self, 'filename_input', None) and self.filename_input.text() or '',
-            'device_name': getattr(self, 'device_name_input', None) and self.device_name_input.text() or 'EEGSimulator',
+            'filename': self._filename if fmt in ('edf', 'fif') else '',
+            'device_name': self._device_name if fmt == 'lsl' else 'EEGSimulator',
         }
 
 

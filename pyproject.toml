@@ -19,6 +19,7 @@ dependencies = [
     "matplotlib>=3.5.0",
     "nibabel==5.4.0",
     "pyedflib==0.1.42",
+    "pylsl>=1.16.0",
 ]
 
 [project.optional-dependencies]

@@ -24,6 +24,7 @@ from ..utils import get_config, get_translator, tr, get_logger
 from ..utils.project_manager import ProjectManager
 from .signal_engine import SignalEngine
 from .mne_simulator import MNESimulator
+from .output_sink import SimulationOutputSink, OutputSinkError
 
 logger = get_logger(__name__)
 
@@ -96,6 +97,7 @@ class EEGSimulator(QMainWindow):
         # 实时保存相关
         self.temp_files = {}
         self._samples_per_channel = {}
+        self._output_sink: Optional[SimulationOutputSink] = None
         
         # 实时滤波状态存储 {channel_name: {'hp': zi_hp, 'lp': zi_lp, 'notch': zi_notch}}
         self._filter_states = {}
@@ -389,10 +391,10 @@ class EEGSimulator(QMainWindow):
             return
 
         output_config = self.output_page.get_output_config()
-        output_format = output_config.get('format', 'lsl')
-        if output_format in ('lsl', 'edf', 'fif') and not getattr(self, '_output_format_warned', False):
-            logger.warning(tr('msg_output_not_implemented', output_format.upper()))
-            self._output_format_warned = True
+        if not self._confirm_file_output_duration(output_config):
+            return
+        if not self._init_output_sink(output_config):
+            return
 
         if (self._mne_simulator is None or not self._mne_simulator.is_ready()):
             QMessageBox.warning(self, tr('warning'), tr('msg_no_forward_model'))
@@ -438,6 +440,8 @@ class EEGSimulator(QMainWindow):
             return
         
         logger.info("停止仿真")
+
+        self._close_output_sink()
         
         self.is_running = False
         self.timer.stop()
@@ -884,6 +888,93 @@ class EEGSimulator(QMainWindow):
                 buf = self.eeg_buffer[first_ch]
                 logger.debug(f"缓冲区更新: {first_ch}范围=[{np.min(buf):.2f}, {np.max(buf):.2f}]μV")
 
+        if self._output_sink and n_samples > 0:
+            batch = {
+                ch: self.eeg_buffer[ch][-n_samples:].copy()
+                for ch in self.selected_channels
+                if ch in self.eeg_buffer
+            }
+            if batch:
+                self._output_sink.write_batch(batch)
+
+    def _confirm_file_output_duration(self, output_config: dict) -> bool:
+        """文件输出时长超过 1 小时或为无限时请求用户确认；LSL 无限制"""
+        fmt = output_config.get('format', 'lsl')
+        duration = float(output_config.get('duration', 0))
+        if not SimulationOutputSink.needs_duration_confirmation(fmt, duration):
+            return True
+
+        if duration <= 0:
+            message = tr('msg_output_duration_unlimited_confirm')
+        else:
+            message = tr('msg_output_duration_long_confirm', self._format_duration_display(duration))
+
+        reply = QMessageBox.question(
+            self,
+            tr('msg_output_duration_confirm_title'),
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    @staticmethod
+    def _format_duration_display(seconds: float) -> str:
+        total = int(seconds)
+        hours, rem = divmod(total, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
+
+    def _init_output_sink(self, output_config: dict) -> bool:
+        """初始化 LSL / EDF / FIF 输出"""
+        fmt = output_config.get('format', 'lsl')
+        ok, msg_key = SimulationOutputSink.validate(
+            fmt,
+            self.selected_channels,
+            output_config.get('output_dir'),
+            output_config.get('filename', ''),
+        )
+        if not ok:
+            QMessageBox.warning(self, tr('warning'), tr(msg_key))
+            return False
+
+        self._output_sink = SimulationOutputSink(
+            fmt=fmt,
+            channel_names=self.selected_channels,
+            sampling_rate=self.sampling_rate,
+            output_dir=output_config.get('output_dir'),
+            filename=output_config.get('filename', ''),
+            device_name=output_config.get('device_name', 'EEGSimulator'),
+        )
+        try:
+            self._output_sink.start()
+        except OutputSinkError as e:
+            QMessageBox.warning(self, tr('warning'), str(e))
+            self._output_sink = None
+            return False
+        except Exception as e:
+            logger.exception("输出初始化失败")
+            QMessageBox.warning(self, tr('warning'), tr('msg_output_start_failed', str(e)))
+            self._output_sink = None
+            return False
+        return True
+
+    def _close_output_sink(self):
+        """结束输出并保存文件（若适用）"""
+        sink = self._output_sink
+        self._output_sink = None
+        if sink is None:
+            return
+        try:
+            path = sink.stop()
+            if path and sink.format in ('edf', 'fif'):
+                QMessageBox.information(self, tr('info'), tr('msg_output_file_saved', path))
+        except Exception as e:
+            logger.exception("输出结束失败")
+            QMessageBox.warning(self, tr('warning'), tr('msg_output_stop_failed', str(e)))
+
     def _update_plots(self):
         """更新波形图 - 缓冲区已包含滤波后的数据，直接显示"""
         time_window = self.signal_page.time_window_spin.value()
@@ -1306,6 +1397,13 @@ class EEGSimulator(QMainWindow):
                 "src_labels": self.source_page.src_labels,
                 "label_source_map": self.source_page.label_source_map
             }
+
+        selected_channels = getattr(self, 'selected_channels', [])
+        electrode_montage = None
+        if hasattr(self, 'electrode_channels_page'):
+            selected_channels = self.electrode_channels_page.get_selected_channels()
+            self.selected_channels = selected_channels
+            electrode_montage = self.electrode_channels_page.get_montage_key()
         
         project_data = {
             "patches": patches_data,
@@ -1313,7 +1411,8 @@ class EEGSimulator(QMainWindow):
             "noise": self.noise_configs,
             "bem": self._serialize_bem_config(),
             "config": {"sampling_rate": self.sampling_rate},
-            "selected_channels": getattr(self, 'selected_channels', []),
+            "selected_channels": selected_channels,
+            "electrode_montage": electrode_montage,
             "source_space": src_info
         }
         
@@ -1371,6 +1470,10 @@ class EEGSimulator(QMainWindow):
         )
         self.sampling_rate = data.get("config", {}).get("sampling_rate", 1000)
         self.selected_channels = data.get("selected_channels", [])
+        self._saved_electrode_montage = (
+            data.get("electrode_montage")
+            or data.get("config", {}).get("montage")
+        )
         
         # 加载 Source Space 信息
         src_info = data.get("source_space", {})
@@ -1519,10 +1622,14 @@ class EEGSimulator(QMainWindow):
         
         # 更新电极通道页面
         if hasattr(self, 'electrode_channels_page'):
+            montage_key = getattr(self, '_saved_electrode_montage', None)
+            if montage_key:
+                self.electrode_channels_page.set_montage_key(montage_key)
             self.electrode_channels_page._update_channel_list()
-            # 如果有选中的通道，更新选中状态
-            if hasattr(self, 'selected_channels') and self.selected_channels:
+            if self.selected_channels:
                 self.electrode_channels_page.set_selected_channels(self.selected_channels)
+            self._sync_heatmap_montage()
+            self._update_plot_curves()
 
     def _update_window_title(self):
         """更新窗口标题"""
