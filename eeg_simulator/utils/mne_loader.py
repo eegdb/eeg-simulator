@@ -23,6 +23,39 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
+# 经典 10-20 十九导（UI「10-20 系统」实际使用的子集）
+# MNE 的 standard_1020 现含 90+ 通道且含 T3/T7 等同位置别名，不宜直接用于 UI
+CLASSIC_1020_CHANNELS = [
+    'Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
+    'T3', 'C3', 'Cz', 'C4', 'T4',
+    'T5', 'P3', 'Pz', 'P4', 'T6', 'O1', 'O2',
+]
+
+
+def pick_montage_channels(montage, ch_names):
+    """从 montage 中取出指定通道子集（保留 nasion/lpa/rpa，避免 MNE plot 警告）"""
+    pos = montage.get_positions()
+    ch_pos = {n: pos['ch_pos'][n] for n in ch_names if n in pos['ch_pos']}
+    missing = [n for n in ch_names if n not in ch_pos]
+    if missing:
+        logger.warning(f"montage 缺少通道位置: {missing[:5]}{'...' if len(missing) > 5 else ''}")
+    dig_kwargs = {
+        'ch_pos': ch_pos,
+        'coord_frame': pos.get('coord_frame', 'head'),
+    }
+    for fid in ('nasion', 'lpa', 'rpa'):
+        if pos.get(fid) is not None:
+            dig_kwargs[fid] = pos[fid]
+    return mne.channels.make_dig_montage(**dig_kwargs)
+
+
+def resolve_standard_montage(montage_name: str):
+    """解析 UI montage 名称为 DigMontage（standard_1020 映射为经典 19 导）"""
+    if montage_name == 'standard_1020':
+        full = mne.channels.make_standard_montage('standard_1020')
+        return pick_montage_channels(full, CLASSIC_1020_CHANNELS)
+    return mne.channels.make_standard_montage(montage_name)
+
 
 # FreeSurfer Desikan-Killiany (aparc) 皮层分区名称
 APARC_REGIONS = frozenset({
@@ -203,6 +236,69 @@ def build_label_source_map(loaded_src, subjects_dir, subject):
     )
 
     return src_labels, label_source_map
+
+
+def build_eeg_channel_mapping(fwd, montage=None, warn_dist_m=0.12):
+    """将 UI montage 通道名映射到前向模型 EEG 传感器名（3D 最近邻）。
+
+    通用方法，适用于 MNE 内置 montage（10-20、10-10、Biosemi、EGI、Easycap 等），
+    只要 montage 提供各通道在 head 坐标系下的 3D 位置即可。
+
+    Args:
+        fwd: MNE Forward 对象
+        montage: mne.channels.DigMontage；None 时使用 standard_1020
+        warn_dist_m: 超过该距离（米）的映射记 debug 日志
+
+    Returns:
+        dict: {ui_channel_name: forward_sensor_name}
+    """
+    info = fwd['info']
+    picks = mne.pick_types(info, meg=False, eeg=True, exclude=[])
+    if len(picks) == 0:
+        picks = np.arange(len(info['ch_names']))
+
+    sensor_locs = []
+    for i in picks:
+        loc = np.array(info['chs'][i]['loc'][:3], dtype=float)
+        if loc.shape == (3,) and not np.allclose(loc, 0):
+            sensor_locs.append((info['ch_names'][i], loc))
+
+    if not sensor_locs:
+        logger.warning("前向模型中无有效 EEG 传感器坐标，无法建立通道映射")
+        return {}
+
+    if montage is None:
+        montage = resolve_standard_montage('standard_1020')
+
+    montage_positions = montage.get_positions()['ch_pos']
+    fwd_ch_names = {name for name, _ in sensor_locs}
+    mapping = {}
+
+    for ch_name in montage.ch_names:
+        if ch_name in fwd_ch_names:
+            mapping[ch_name] = ch_name
+            continue
+        if ch_name not in montage_positions:
+            continue
+
+        std_pos = np.asarray(montage_positions[ch_name], dtype=float)
+        best_ch, best_dist = None, float('inf')
+        for sensor_ch, loc in sensor_locs:
+            dist = float(np.linalg.norm(loc - std_pos))
+            if dist < best_dist:
+                best_dist, best_ch = dist, sensor_ch
+        if best_ch is not None:
+            mapping[ch_name] = best_ch
+            if best_dist > warn_dist_m:
+                logger.debug(
+                    f"  {ch_name} -> {best_ch} (距离 {best_dist * 100:.1f} cm)"
+                )
+
+    for sensor_ch, _ in sensor_locs:
+        if sensor_ch in montage_positions and sensor_ch not in mapping:
+            mapping[sensor_ch] = sensor_ch
+
+    return mapping
 
 
 def load_forward_model(file_path):

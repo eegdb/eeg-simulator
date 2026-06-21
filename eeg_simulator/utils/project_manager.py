@@ -272,17 +272,27 @@ class ProjectManager:
             })
         return serialized
     
-    @staticmethod
-    def _serialize_couplings(couplings):
-        """序列化耦合数据"""
-        serialized = []
+    @classmethod
+    def _serialize_couplings(cls, couplings):
+        """序列化耦合数据（CouplingModel 或 to_dict() 字典）"""
+        if not isinstance(couplings, dict):
+            return cls._convert_to_json_serializable(couplings)
+
+        serialized = {}
         for coupling_id, c in couplings.items():
-            serialized.append({
-                "id": coupling_id,
-                "source_id": c.source_patch_id,
-                "target_id": c.target_patch_id,
-                "type": c.type,
-                "strength": ProjectManager._convert_to_json_serializable(c.strength),
-                "delay": ProjectManager._convert_to_json_serializable(c.delay)
-            })
+            if isinstance(c, dict):
+                cid = c.get("id", coupling_id)
+                serialized[cid] = cls._convert_to_json_serializable(c)
+            else:
+                serialized[coupling_id] = {
+                    "id": c.id,
+                    "source_patch_id": c.source_patch_id,
+                    "target_patch_id": c.target_patch_id,
+                    "type": c.type,
+                    "strength": cls._convert_to_json_serializable(c.strength),
+                    "delay": cls._convert_to_json_serializable(c.delay),
+                    "sampling_rate": cls._convert_to_json_serializable(
+                        getattr(c, "sampling_rate", 1000)
+                    ),
+                }
         return serialized

@@ -339,7 +339,6 @@ class SimulatorProject:
                 elif src_filename:
                     fwd_mapping = {
                         'sample-oct-6-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                        'sample-all-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
                         'sample-oct-6-orig-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
                         'sample-fsaverage-ico-5-src.fif': 'sample_audvis-eeg-ico-5-fwd.fif',
                     }
@@ -360,6 +359,8 @@ class SimulatorProject:
 
     def _clear_all_data(self):
         """清除所有数据"""
+        if self._sim.is_running:
+            self._sim.simulation.stop_simulation()
         logger.info("清除所有数据")
         self._sim.patches.clear()
         self._sim._current_patch_id = None
@@ -403,6 +404,7 @@ class SimulatorProject:
                 self._sim.sampling_rate = self._sim.output_page.sr_spin.value()
             else:
                 self._sim.output_page.sr_spin.setValue(self._sim.sampling_rate)
+            self._sim.buffers.sync_engines_sampling_rate()
 
         # 恢复信号滤波参数
         if hasattr(self._sim, 'signal_page'):

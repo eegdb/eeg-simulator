@@ -170,9 +170,17 @@ class SimulatorSignal:
                         # 通道名直接匹配（无需映射）
                         eeg_data[ch_name] = all_data[ch_name]
                     else:
-                        # 记录未找到的通道，稍后使用简化投影
                         missing_channels.append(ch_name)
-                        logger.debug(f"通道 {ch_name} (映射: {mapped_name}) 未在MNE前向模型中找到匹配，将使用简化投影")
+                        logged = getattr(self._sim, '_logged_missing_channels', None)
+                        if logged is None:
+                            logged = set()
+                            self._sim._logged_missing_channels = logged
+                        if ch_name not in logged:
+                            logged.add(ch_name)
+                            logger.warning(
+                                f"通道 {ch_name} (映射: {mapped_name}) "
+                                f"未在MNE前向模型输出中找到，将使用简化投影"
+                            )
 
                 # 对未找到的通道使用简化投影
                 if missing_channels:
@@ -181,14 +189,7 @@ class SimulatorSignal:
                     )
                     eeg_data.update(simplified_data)
 
-                # 调试：检查投影结果
-                if eeg_data:
-                    first_ch = list(eeg_data.keys())[0]
-                    first_signal = eeg_data[first_ch]
-                    logger.debug(f"MNE投影: 选中{len(self._sim.selected_channels)}个, "
-                               f"MNE匹配{len(eeg_data) - len(missing_channels)}个, "
-                               f"简化投影{len(missing_channels)}个")
-                else:
+                if not eeg_data:
                     logger.warning(f"没有匹配的通道! 选中: {self._sim.selected_channels}, "
                                  f"可用: {list(all_data.keys())[:10]}...")
                     # 完全回退到简化投影
@@ -230,9 +231,6 @@ class SimulatorSignal:
                 eeg_data[ch] = projected
             else:
                 eeg_data[ch] = np.zeros(n_samples)
-
-        logger.debug(f"简化投影: {len(eeg_data)}个通道, 首通道{list(eeg_data.keys())[0] if eeg_data else 'None'}="
-                   f"[{np.min(list(eeg_data.values())[0]):.2e}, {np.max(list(eeg_data.values())[0]):.2e}]")
 
         return eeg_data
 
@@ -357,13 +355,6 @@ class SimulatorSignal:
             self._sim.eeg_buffer[ch_name] = np.roll(self._sim.eeg_buffer[ch_name], -n_samples)
             self._sim.eeg_buffer[ch_name][-n_samples:] = signal_uV
 
-        # 调试：检查缓冲区状态
-        if self._sim.selected_channels:
-            first_ch = self._sim.selected_channels[0]
-            if first_ch in self._sim.eeg_buffer:
-                buf = self._sim.eeg_buffer[first_ch]
-                logger.debug(f"缓冲区更新: {first_ch}范围=[{np.min(buf):.2f}, {np.max(buf):.2f}]μV")
-
         if self._sim._output_sink and n_samples > 0:
             batch = {
                 ch: self._sim.eeg_buffer[ch][-n_samples:].copy()
@@ -438,6 +429,38 @@ class SimulatorSignal:
             f"实时滤波器已初始化: HP={highpass}Hz, LP={lowpass}Hz, "
             f"Notch={notch} ({notch_freq}Hz)"
         )
+
+    def warm_up_display_buffer(self):
+        """预填充显示缓冲区并预热滤波器，避免启动后短暂显示直线波形。"""
+        n = self._sim.buffer_size
+        if n <= 0 or not self._sim.selected_channels:
+            return
+
+        sr = self._sim.sampling_rate
+        dt = 1.0 / sr
+        t = np.linspace(0, n * dt, n, endpoint=False)
+
+        patch_signals = self._generate_patch_signals_batch(t, n)
+        patch_signals = self._apply_coupling_batch(patch_signals, t, n)
+        eeg_data = self._project_to_electrodes_batch(patch_signals, n)
+        if self._sim.noise_configs:
+            eeg_data = self._add_noise_batch(eeg_data, t, n)
+
+        self._sim.time_buffer[:n] = t
+
+        for ch_name in self._sim.selected_channels:
+            if ch_name not in self._sim.eeg_buffer:
+                self._sim.eeg_buffer[ch_name] = np.zeros(n)
+            raw = eeg_data.get(ch_name)
+            if raw is None:
+                self._sim.eeg_buffer[ch_name][:] = 0
+                continue
+            signal_uV = raw * 1e6
+            signal_uV = self._apply_filter(signal_uV, ch_name)
+            self._sim.eeg_buffer[ch_name][:] = signal_uV
+
+        self._sim.simulation_time = n * dt
+        logger.debug(f"显示缓冲区已预热: {n} 点, t={self._sim.simulation_time:.2f}s")
 
     def _apply_filter(self, data, ch_name):
         """应用实时有状态滤波

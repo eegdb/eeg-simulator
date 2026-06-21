@@ -189,5 +189,21 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config.get('language'), 'en')
 
 
+class TestLogger(unittest.TestCase):
+    """测试日志器命名"""
+
+    def test_no_double_prefix(self):
+        from eeg_simulator.utils.logger import get_logger
+
+        self.assertEqual(
+            get_logger('eeg_simulator.core.foo').name,
+            'eeg_simulator.core.foo',
+        )
+        self.assertEqual(
+            get_logger('core.foo').name,
+            'eeg_simulator.core.foo',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

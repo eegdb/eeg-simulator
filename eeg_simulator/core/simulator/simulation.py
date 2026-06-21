@@ -19,9 +19,9 @@ class SimulatorSimulation:
         self._sim = simulator
 
     def start_simulation(self):
-        """开始仿真"""
+        """开始仿真。成功返回 True，校验失败返回 False。"""
         if self._sim.is_running:
-            return
+            return True
 
         logger.info("=" * 40)
         logger.info("开始仿真")
@@ -29,22 +29,25 @@ class SimulatorSimulation:
         # 检查是否有选中的通道
         if not self._sim.selected_channels:
             QMessageBox.warning(self._sim, tr('warning'), tr('msg_no_channels_selected'))
-            return
+            return False
 
         if not self._sim.patches:
             QMessageBox.warning(self._sim, tr('warning'), tr('msg_no_patches'))
-            return
+            return False
 
         output_config = self._sim.output_page.get_output_config()
         if not self._validate_output_config(output_config):
-            return
+            return False
         if not self._confirm_file_output_duration(output_config):
-            return
+            return False
         if not self._init_output_sink(output_config):
-            return
+            return False
 
         if (self._sim._mne_simulator is None or not self._sim._mne_simulator.is_ready()):
             QMessageBox.warning(self._sim, tr('warning'), tr('msg_no_forward_model'))
+
+        # 确保缓冲区尺寸与当前时间窗口一致（须在 is_running 置 True 之前）
+        self._sim.buffers._resize_signal_buffers()
 
         # 更新状态
         self._sim.is_running = True
@@ -61,17 +64,24 @@ class SimulatorSimulation:
         # 重置耦合延迟缓冲
         self._sim._coupling_engine.reset_histories()
         self._sim._last_fft_update_time = 0.0
+        self._sim._last_heatmap_update_time = -self._sim.heatmap_refresh_interval
+
+        # 确保热力图 montage 与当前电极布局一致
+        if hasattr(self._sim, 'ui'):
+            self._sim.ui._sync_heatmap_montage()
 
         # 更新UI
         self._sim.status_run.setText("● " + tr('status_running'))
         self._sim.status_run.setStyleSheet(f"color: {COLORS['accent']};")
         self._sim.output_page.update_simulation_status(True)
 
-        # 初始化图表
-        self._sim.signal_page.update_plots(self._sim.selected_channels)
-
-        # 初始化实时滤波状态
+        # 初始化实时滤波状态，并预热显示缓冲区
         self._sim.signal._init_filter_states()
+        self._sim.signal.warm_up_display_buffer()
+
+        # 初始化图表并立即绘制预热后的数据
+        self._sim.signal_page.update_plots(self._sim.selected_channels)
+        self._update_plots()
 
         # 启动定时器
         update_interval = int(1000 / 30)  # 30fps
@@ -80,6 +90,7 @@ class SimulatorSimulation:
 
         logger.info(f"仿真参数: 采样率={self._sim.sampling_rate}Hz")
         logger.info(f"选中通道: {self._sim.selected_channels}")
+        return True
 
     def stop_simulation(self):
         """停止仿真"""
@@ -160,7 +171,8 @@ class SimulatorSimulation:
             self._update_plots()
 
             # 更新热力图（根据配置的时间间隔）
-            if self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval:
+            if (self._sim.signal_page.is_heatmap_enabled()
+                    and self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval):
                 self._update_heatmap_from_simulation()
                 self._sim._last_heatmap_update_time = self._sim.simulation_time
 
@@ -268,14 +280,16 @@ class SimulatorSimulation:
 
         t_display = self._sim.time_buffer[-n_samples:] if len(self._sim.time_buffer) >= n_samples else self._sim.time_buffer
 
+        channel_data = {}
         for ch_name in self._sim.selected_channels:
             if ch_name in self._sim.eeg_buffer and ch_name in self._sim.signal_page.plot_curves:
-                # 缓冲区中已是滤波后的数据，直接显示
-                data = self._sim.eeg_buffer[ch_name][-n_samples:].copy()
-                self._sim.signal_page.plot_curves[ch_name].setData(t_display, data)
+                channel_data[ch_name] = self._sim.eeg_buffer[ch_name][-n_samples:].copy()
+        if channel_data:
+            self._sim.signal_page.update_waveform_plots(t_display, channel_data)
 
         # 更新FFT频谱（节流，降低 CPU 占用）
-        if self._sim.simulation_time - self._sim._last_fft_update_time >= self._sim._fft_update_interval:
+        if (self._sim.signal_page.is_fft_enabled()
+                and self._sim.simulation_time - self._sim._last_fft_update_time >= self._sim._fft_update_interval):
             self._sim.signal._update_fft_spectrum(n_samples)
             self._sim._last_fft_update_time = self._sim.simulation_time
 
@@ -300,4 +314,6 @@ class SimulatorSimulation:
             activities = [a / max_act for a in activities]
 
         # 更新热力图（通过signal_page）
-        self._sim.signal_page.update_heatmap(np.array(activities))
+        self._sim.signal_page.update_heatmap(
+            np.array(activities), self._sim.selected_channels
+        )

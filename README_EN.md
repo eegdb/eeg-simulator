@@ -32,7 +32,13 @@ An EEG signal simulation platform based on **PyQt6** and **MNE-Python**, support
 EEG_Simulation/
 ├── eeg_simulator/                 # Main package
 │   ├── core/                      # Simulation core
-│   │   ├── simulator_nav.py       # Main simulator (NavigationView layout)
+│   │   ├── simulator/             # Main simulator (composable services)
+│   │   │   ├── app.py             # EEGSimulator main class
+│   │   │   ├── simulation.py      # Start/stop and main loop
+│   │   │   ├── buffers.py         # Signal buffers
+│   │   │   └── ...                # UI / project / MNE / patch ops
+│   │   ├── simulator_nav.py       # Backward-compatible re-export
+│   │   ├── output_sink.py         # LSL / EDF / FIF output
 │   │   ├── signal_engine.py       # Signal generation engine
 │   │   └── mne_simulator.py       # MNE integration simulator
 │   ├── models/                    # Data models

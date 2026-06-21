@@ -87,7 +87,8 @@ class SimulatorUI:
             montage = self._sim.electrode_channels_page.get_current_montage()
             if montage:
                 self._sim.signal_page.set_montage(montage)
-                logger.info(f"热力图布局已同步: {montage}")
+                key = self._sim.electrode_channels_page.get_montage_key()
+                logger.info(f"热力图布局已同步: {key} ({len(montage.ch_names)} 通道)")
         except Exception as e:
             logger.warning(f"同步热力图布局失败: {e}")
 

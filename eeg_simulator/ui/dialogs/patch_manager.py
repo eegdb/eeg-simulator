@@ -23,6 +23,17 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from ...utils import tr, get_logger
+
+# MNE 源幅度 UI 单位：显示值 × AMPLITUDE_SCALE_UNIT = amplitude_scale (A/nAm)
+AMPLITUDE_SCALE_UNIT = 1e-9
+
+
+def _amplitude_scale_to_ui(scale: float) -> float:
+    return scale / AMPLITUDE_SCALE_UNIT
+
+
+def _amplitude_scale_from_ui(ui_value: float) -> float:
+    return ui_value * AMPLITUDE_SCALE_UNIT
 from ...utils.mri_display import prepare_axial_slice, vox_to_display_xy
 from ...utils.waveform_parser import parse_waveform_array
 from ...models import Patch
@@ -781,12 +792,15 @@ class PatchManagerDialog(QDialog):
         amp_scale_layout = QHBoxLayout()
         amp_scale_layout.addWidget(QLabel(tr('label_amplitude_scale')))
         self.amp_scale_spin = QDoubleSpinBox()
-        self.amp_scale_spin.setRange(1e-12, 1e-6)
-        self.amp_scale_spin.setDecimals(12)
-        self.amp_scale_spin.setValue(1e-9)
-        self.amp_scale_spin.setSingleStep(1e-10)
+        self.amp_scale_spin.setRange(0.001, 1000.0)
+        self.amp_scale_spin.setDecimals(3)
+        self.amp_scale_spin.setValue(1.0)
+        self.amp_scale_spin.setSingleStep(0.1)
         self.amp_scale_spin.setToolTip(tr('tooltip_amplitude_scale'))
         amp_scale_layout.addWidget(self.amp_scale_spin)
+        self.amp_scale_unit_label = QLabel(tr('suffix_amplitude_scale'))
+        amp_scale_layout.addWidget(self.amp_scale_unit_label)
+        amp_scale_layout.addStretch()
         waveform_layout.addLayout(amp_scale_layout)
         
         # ========== 波形预览 ==========
@@ -1892,7 +1906,7 @@ class PatchManagerDialog(QDialog):
         # 更新幅度因子
         patch = self.parent_simulator.patches.get(self.current_patch_id)
         if patch:
-            patch.amplitude_scale = self.amp_scale_spin.value()
+            patch.amplitude_scale = _amplitude_scale_from_ui(self.amp_scale_spin.value())
         
         self.patch_modified.emit(self.current_patch_id, {
             'waveform_type': waveform_type,
@@ -1979,7 +1993,7 @@ class PatchManagerDialog(QDialog):
         actual_dipole_count = 1  # 中心偶极子
         if patch:
             # 设置幅度因子
-            patch.amplitude_scale = self.amp_scale_spin.value()
+            patch.amplitude_scale = _amplitude_scale_from_ui(self.amp_scale_spin.value())
             
             if nearby_vertices:
                 # 为中心偶极子周围的顶点创建偶极子并添加到 Patch
@@ -2149,7 +2163,9 @@ class PatchManagerDialog(QDialog):
             self.custom_data.setPlainText(str(data))
         
         # 加载幅度因子
-        self.amp_scale_spin.setValue(getattr(patch, 'amplitude_scale', 1e-9))
+        self.amp_scale_spin.setValue(
+            _amplitude_scale_to_ui(getattr(patch, 'amplitude_scale', AMPLITUDE_SCALE_UNIT))
+        )
         
         # 更新显示
         self._update_nearby_dipoles()

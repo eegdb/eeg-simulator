@@ -16,15 +16,20 @@ class SimulatorBuffers:
     def _on_sr_changed_from_page(self, value):
         """从输出页面改变采样率"""
         self._sim.sampling_rate = value
-        self._sim.samples_per_update = max(1, int(self._sim.sampling_rate / 30))
-        self._sim.signal_engine.sampling_rate = self._sim.sampling_rate
-        self._sim._coupling_engine.set_sampling_rate(self._sim.sampling_rate)
-        for coupling in self._sim._coupling_models.values():
-            coupling.set_sampling_rate(self._sim.sampling_rate)
-        if self._sim._mne_simulator is not None:
-            self._sim._mne_simulator.sampling_rate = self._sim.sampling_rate
+        self.sync_engines_sampling_rate()
         self._resize_signal_buffers()
         self._sim.ui._update_status_bar()
+
+    def sync_engines_sampling_rate(self):
+        """将各引擎采样率与 self._sim.sampling_rate 同步"""
+        sr = self._sim.sampling_rate
+        self._sim.samples_per_update = max(1, int(sr / 30))
+        self._sim.signal_engine.sampling_rate = sr
+        self._sim._coupling_engine.set_sampling_rate(sr)
+        for coupling in self._sim._coupling_models.values():
+            coupling.set_sampling_rate(sr)
+        if self._sim._mne_simulator is not None:
+            self._sim._mne_simulator.sampling_rate = sr
 
     def _on_time_window_changed(self, _value):
         """时间窗口改变时同步环形缓冲区大小"""
@@ -62,6 +67,9 @@ class SimulatorBuffers:
         if montage:
             self._sim.signal_page.set_montage(montage)
         self._sim.signal_page.clear_heatmap()
+
+        if self._sim.mne_fwd is not None:
+            self._sim.mne.refresh_channel_mapping()
 
         self._update_plot_curves()
 

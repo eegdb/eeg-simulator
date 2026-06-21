@@ -32,7 +32,13 @@
 EEG_Simulation/
 ├── eeg_simulator/                 # 主程序包
 │   ├── core/                      # 仿真核心
-│   │   ├── simulator_nav.py       # 主仿真器（NavigationView 布局）
+│   │   ├── simulator/             # 主仿真器（组合式服务模块）
+│   │   │   ├── app.py             # EEGSimulator 主类
+│   │   │   ├── simulation.py      # 启停与主循环
+│   │   │   ├── buffers.py         # 信号缓冲区
+│   │   │   └── ...                # UI / 项目 / MNE / Patch 等
+│   │   ├── simulator_nav.py       # 向后兼容 re-export
+│   │   ├── output_sink.py         # LSL / EDF / FIF 输出
 │   │   ├── signal_engine.py       # 信号生成引擎
 │   │   └── mne_simulator.py       # MNE 集成仿真器
 │   ├── models/                    # 数据模型

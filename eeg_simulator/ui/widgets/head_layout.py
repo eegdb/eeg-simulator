@@ -15,10 +15,46 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage
 
 from ..styles import COLORS
-from ...utils import tr
-from ...utils.logger import get_logger
+from ...utils import tr, get_logger
+from ...utils.mne_loader import resolve_standard_montage
 
 logger = get_logger(__name__)
+
+# 10-10 中与 T7/T8/P7/P8 同位置的旧 10-20 命名，地形图只保留一套
+_LEGACY_OVERLAP_CHANNELS = frozenset({'T3', 'T4', 'T5', 'T6'})
+_POS_TOL_M = 1e-4
+
+
+def _unique_channels_for_topomap(montage, ch_names):
+    """去掉空间位置重叠的通道（优先保留新命名，如 T7 而非 T3）"""
+    positions = montage.get_positions()['ch_pos']
+    ordered = sorted(
+        ch_names,
+        key=lambda n: (n in _LEGACY_OVERLAP_CHANNELS, n),
+    )
+    seen = []
+    unique = []
+    for name in ordered:
+        if name not in positions:
+            continue
+        pos = np.asarray(positions[name], dtype=float)
+        if any(np.linalg.norm(pos - p) < _POS_TOL_M for p in seen):
+            continue
+        seen.append(pos)
+        unique.append(name)
+    return unique
+
+
+def _montage_pick(montage, ch_names):
+    """从 montage 中取出子集（兼容不同 MNE 版本）"""
+    try:
+        return montage.pick(ch_names)
+    except AttributeError:
+        pos = montage.get_positions()
+        ch_pos = {n: pos['ch_pos'][n] for n in ch_names if n in pos['ch_pos']}
+        return mne.channels.make_dig_montage(
+            ch_pos=ch_pos, coord_frame=pos.get('coord_frame', 'head')
+        )
 
 
 class HeatmapOverlayWidget(QWidget):
@@ -27,6 +63,7 @@ class HeatmapOverlayWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._activity_values = None
+        self._channel_names = None
         self._montage = None
         self._pixmap = None
         
@@ -35,10 +72,55 @@ class HeatmapOverlayWidget(QWidget):
         self._montage = montage
         self._update_plot()
         
-    def update_heatmap(self, activity_values):
-        """更新热力图数据"""
+    def update_heatmap(self, activity_values, channel_names=None):
+        """更新热力图数据
+        
+        Args:
+            activity_values: 各通道活动强度
+            channel_names: 与 activity_values 对应的通道名；不传则假定与 montage 顺序一致
+        """
         self._activity_values = activity_values
+        self._channel_names = list(channel_names) if channel_names else None
         self._update_plot()
+
+    def _prepare_plot_channels_and_data(self):
+        """准备无重叠、与数据对齐的通道名和数值"""
+        if self._montage is None or self._activity_values is None:
+            return None
+
+        activities = np.asarray(self._activity_values, dtype=float)
+        positions = self._montage.get_positions()['ch_pos']
+
+        if self._channel_names is not None:
+            if len(self._channel_names) != len(activities):
+                logger.warning("热力图通道名数量与数据长度不一致")
+                return None
+            candidates = [n for n in self._channel_names if n in positions]
+            if not candidates:
+                missing = self._channel_names[:5]
+                logger.warning(
+                    "热力图通道名与 montage 不匹配（示例: %s），请检查电极布局",
+                    missing,
+                )
+                return None
+            name_to_val = dict(zip(self._channel_names, activities))
+        else:
+            montage_names = list(self._montage.ch_names)
+            if len(activities) != len(montage_names):
+                return None
+            candidates = montage_names
+            name_to_val = dict(zip(montage_names, activities))
+
+        unique_names = _unique_channels_for_topomap(self._montage, candidates)
+        if len(unique_names) < 3:
+            logger.warning(
+                "热力图有效通道不足 3 个（当前 %d），无法绘制地形图",
+                len(unique_names),
+            )
+            return None
+
+        data = np.array([name_to_val[n] for n in unique_names], dtype=float)
+        return unique_names, data
         
     def _update_plot(self):
         """使用 MNE plot_topomap 绘制热力图"""
@@ -53,52 +135,40 @@ class HeatmapOverlayWidget(QWidget):
             return
             
         try:
-            # 根据控件大小动态调整图形尺寸，避免固定大小带来的空间浪费
+            plot_data = self._prepare_plot_channels_and_data()
+            if plot_data is None:
+                self._update_plot_simple()
+                return
+            ch_names, data = plot_data
+            positions = self._montage.get_positions()['ch_pos']
+            pos = np.array([positions[name] for name in ch_names])[:, :2]
+
             widget_size = min(self.width(), self.height())
             dpi = 100
             figsize = max(2, widget_size / dpi) if widget_size > 0 else 4
-            
-            # 创建图形 - 使用更紧凑的设置
-            fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor='none')
+
+            fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor='#1a1a1a')
             ax = fig.add_subplot(111)
-            
-            # 创建 MNE Info 对象
-            ch_names = list(self._montage.ch_names)
-            if len(self._activity_values) != len(ch_names):
-                # 数据长度不匹配，使用随机数据
-                data = np.random.rand(len(ch_names))
-            else:
-                data = np.array(self._activity_values)
-            
-            info = mne.create_info(ch_names=ch_names, sfreq=1000, ch_types='eeg')
-            info.set_montage(self._montage)
-            
-            # 使用 MNE plot_topomap 绘制地形图（带等高线，无头部轮廓圆圈）
-            im, cn = mne.viz.plot_topomap(
-                data, info,
+            ax.set_facecolor('#1a1a1a')
+
+            mne.viz.plot_topomap(
+                data, pos,
                 axes=ax,
                 show=False,
-                contours=8,  # 显示多条等高线
+                contours=8,
                 cmap='RdBu_r',
                 vlim=(0, 1),
-                sphere='auto',
-                border='off',
-                outlines=None,  # 不显示头部轮廓圆圈
-                extrapolate='local',
-                res=128
+                outlines='head',
+                extrapolate='head',
+                res=128,
             )
             
-            # 不添加电极位置标记（黑点），保持热力图简洁
-            
-            # 设置透明背景
-            fig.patch.set_alpha(0)
-            ax.set_facecolor('none')
+            fig.patch.set_alpha(1.0)
             ax.axis('off')
-            
-            # 保存为 PNG - 使用零边距填充整个空间
+
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=dpi,
-                       facecolor='none',
+                       facecolor='#1a1a1a',
                        edgecolor='none',
                        bbox_inches='tight',
                        pad_inches=0)
@@ -122,10 +192,12 @@ class HeatmapOverlayWidget(QWidget):
     def _update_plot_simple(self):
         """使用简化的方法绘制等高线地形图"""
         try:
-            if self._montage is None or self._activity_values is None:
+            plot_data = self._prepare_plot_channels_and_data()
+            if plot_data is None:
                 self._pixmap = None
                 self.update()
                 return
+            ch_names, data = plot_data
             
             # 根据控件大小调整图形尺寸
             widget_size = min(self.width(), self.height())
@@ -135,16 +207,9 @@ class HeatmapOverlayWidget(QWidget):
             fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor='none')
             ax = fig.add_subplot(111)
             
-            # 获取电极位置
-            ch_names = list(self._montage.ch_names)
-            pos = np.array([self._montage.get_positions()['ch_pos'][name] 
-                           for name in ch_names])[:, :2]  # 只取 x, y
-            
-            # 数据
-            if len(self._activity_values) != len(ch_names):
-                data = np.random.rand(len(ch_names))
-            else:
-                data = np.array(self._activity_values)
+            pos = np.array([
+                self._montage.get_positions()['ch_pos'][name] for name in ch_names
+            ])[:, :2]
             
             # 使用三角剖分和等高线绘制地形图
             from matplotlib.tri import Triangulation
@@ -214,6 +279,7 @@ class HeatmapOverlayWidget(QWidget):
     def clear(self):
         """清除热力图"""
         self._activity_values = None
+        self._channel_names = None
         self._pixmap = None
         self.update()
     
@@ -260,7 +326,7 @@ class HeatmapOverlayWidget(QWidget):
             montage_name = 'standard_1020'
         
         try:
-            montage = mne.channels.make_standard_montage(montage_name)
+            montage = resolve_standard_montage(montage_name)
             self.set_montage(montage)
         except Exception as e:
             logger.warning(f"设置 montage 失败: {e}")
@@ -271,57 +337,42 @@ class HeatmapOverlayWidget(QWidget):
         pass
     
     def show_default_head(self):
-        """显示默认空状态（无数据时）- 显示电极位置和头部轮廓"""
+        """无仿真数据时显示电极位置预览"""
+        if self._montage is None:
+            self._pixmap = None
+            self.update()
+            return
         try:
-            # 根据控件大小动态调整图形尺寸
             widget_size = min(self.width(), self.height())
             dpi = 100
             figsize = max(2, widget_size / dpi) if widget_size > 0 else 4
-            
-            fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor='none')
+
+            fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor='#1a1a1a')
             ax = fig.add_subplot(111)
-            
-            # 不显示电极位置和标签，保持简洁
-            
-            # 不绘制头部轮廓圆圈
-            
-            # 设置坐标轴 - 紧凑布局
-            if self._montage is not None:
-                pos = np.array([self._montage.get_positions()['ch_pos'][name] 
-                               for name in self._montage.ch_names])[:, :2]
-                margin = 0.02
-                ax.set_xlim(pos[:, 0].min() - margin, pos[:, 0].max() + margin)
-                ax.set_ylim(pos[:, 1].min() - margin, pos[:, 1].max() + margin)
-            else:
-                margin = 0.05
-                ax.set_xlim(-0.5 - margin, 0.5 + margin)
-                ax.set_ylim(-0.5 - margin, 0.5 + margin)
-            ax.set_aspect('equal')
-            ax.axis('off')
-            fig.patch.set_alpha(0)
-            ax.set_facecolor('none')
-            
-            # 保存为 PNG - 零边距
+            self._montage.plot(
+                show_names=False,
+                kind='topomap',
+                sphere=0.095,
+                show=False,
+                axes=ax,
+            )
+            fig.patch.set_alpha(1.0)
+            ax.set_facecolor('#1a1a1a')
+
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=dpi,
-                       facecolor='none',
+                       facecolor='#1a1a1a',
                        edgecolor='none',
                        bbox_inches='tight',
                        pad_inches=0)
             buf.seek(0)
-            
-            # 转换为 QPixmap
             image = QImage.fromData(buf.getvalue())
             self._pixmap = QPixmap.fromImage(image)
-            
-            # 清理
             plt.close(fig)
             buf.close()
-            
             self.update()
-            
         except Exception as e:
-            logger.warning(f"绘制默认状态失败: {e}")
+            logger.warning(f"绘制默认电极布局失败: {e}")
             self._pixmap = None
 
 
@@ -389,7 +440,7 @@ class HeadLayoutWidget(QWidget):
     def set_montage(self, montage_name):
         """设置 MNE 内置 montage"""
         try:
-            self._montage = mne.channels.make_standard_montage(montage_name)
+            self._montage = resolve_standard_montage(montage_name)
             self._current_name = montage_name
             self._update_plot()
             return True
@@ -627,10 +678,10 @@ class HeadLayoutSelector(QWidget):
         # 设置 montage
         self.set_montage(montage_name)
     
-    def update_heatmap(self, activity_values):
+    def update_heatmap(self, activity_values, channel_names=None):
         """更新热力图数据"""
         if self.view_mode_combo.currentData() == 'heatmap':
-            self.heatmap_widget.update_heatmap(activity_values)
+            self.heatmap_widget.update_heatmap(activity_values, channel_names)
         
     def clear_heatmap(self):
         """清除热力图"""

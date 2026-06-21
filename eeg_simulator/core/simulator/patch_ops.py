@@ -150,8 +150,25 @@ class SimulatorPatchOps:
         logger.info(f"创建偶极子: {dipole_id}, 位置: ({position[0]:.4f}, {position[1]:.4f}, {position[2]:.4f})")
         return dipole
 
+    def _get_forward_active_verts(self):
+        """前向模型中实际参与投影的 (hemi, vertno) 集合；未加载前向模型时返回 None"""
+        mne_sim = getattr(self._sim, '_mne_simulator', None)
+        if mne_sim is not None:
+            return mne_sim._get_forward_src_verts()
+
+        fwd = getattr(self._sim, 'mne_fwd', None)
+        if fwd is None:
+            return None
+
+        verts = set()
+        for hemi_idx, s in enumerate(fwd['src']):
+            hemi = 'lh' if hemi_idx == 0 else 'rh'
+            for vertno in s.get('vertno', ()):
+                verts.add((hemi, int(vertno)))
+        return verts
+
     def find_dipoles_in_radius(self, center_position, radius, src=None, label_source_map=None, hemi=None):
-        """查找半径内的顶点"""
+        """查找半径内的顶点（若已加载前向模型，仅返回其中有效源点）"""
         nearby_vertices = []
 
         if src is None:
@@ -160,6 +177,7 @@ class SimulatorPatchOps:
         if src is None:
             return nearby_vertices
 
+        forward_verts = self._get_forward_active_verts()
         center_pos = np.array(center_position)
 
         for src_idx, s in enumerate(src):
@@ -171,6 +189,9 @@ class SimulatorPatchOps:
                 continue
 
             for vertno in s['vertno']:
+                if forward_verts is not None and (current_hemi, int(vertno)) not in forward_verts:
+                    continue
+
                 pos = s['rr'][vertno]
                 dist = np.linalg.norm(pos - center_pos)
 

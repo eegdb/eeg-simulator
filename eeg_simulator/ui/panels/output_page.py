@@ -284,7 +284,20 @@ class OutputPage(NavigationPage):
         """更新仿真状态"""
         if is_running:
             self.sim_control_btn.setText(tr('btn_stop_sim'))
-            self.sim_control_btn.setObjectName("StopBtn")
+            self.sim_control_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {get_color('red')}20;
+                    color: {get_color('red')};
+                    border: 1px solid {get_color('red')}40;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    min-height: 36px;
+                }}
+                QPushButton:hover {{
+                    background-color: {get_color('red')}30;
+                }}
+            """)
             self.status_label.setText(tr('status_running'))
             self.status_frame.setStyleSheet(f"""
                 background-color: rgba(16, 185, 129, 0.2);

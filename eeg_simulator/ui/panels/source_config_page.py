@@ -319,18 +319,30 @@ class SourceConfigPage(NavigationPage):
             # 自动加载匹配的正向模型（优先使用EEG版本）
             fwd_mapping = {
                 'sample-oct-6-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',  # EEG only
-                'sample-all-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
                 'sample-oct-6-orig-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
                 'volume-7mm-src.fif': None,
                 'sample-fsaverage-ico-5-src.fif': 'sample_audvis-eeg-ico-5-fwd.fif',
             }
+            # sample-all-src 为全皮层高密度网格，Sample 数据集无配套前向模型，不可与 oct-6-fwd 联用
+            incompatible_src = {
+                'sample-all-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
+            }
             # 如果EEG版本不存在，回退到MEG+EEG版本
             fwd_mapping_fallback = {
                 'sample-oct-6-src.fif': 'sample_audvis-meg-eeg-oct-6-fwd.fif',
-                'sample-all-src.fif': 'sample_audvis-meg-eeg-oct-6-fwd.fif',
                 'sample-oct-6-orig-src.fif': 'sample_audvis-meg-eeg-oct-6-fwd.fif',
                 'sample-fsaverage-ico-5-src.fif': 'sample_audvis-meg-eeg-ico-5-fwd.fif',
             }
+            if src_filename in incompatible_src:
+                logger.warning(
+                    f"{src_filename} 为全皮层源空间，不能自动加载 oct-6 前向模型；"
+                    "请改用 sample-oct-6-src.fif，或自行计算匹配的前向模型"
+                )
+                QMessageBox.warning(
+                    self,
+                    tr('warning'),
+                    tr('msg_all_src_no_fwd', src_filename),
+                )
             fwd_filename = fwd_mapping.get(src_filename)
             if fwd_filename:
                 fwd_path = os.path.join(data_path, 'MEG', 'sample', fwd_filename)

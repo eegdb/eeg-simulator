@@ -1,12 +1,11 @@
 """MNE 前向模型、耦合引擎与通道映射。"""
 
-from collections import defaultdict
-
 import mne
 import numpy as np
 
 from ...models import MNECouplingEngine
 from ...utils import tr, get_logger
+from ...utils.mne_loader import build_eeg_channel_mapping, resolve_standard_montage
 from ..mne_simulator import MNESimulator
 
 logger = get_logger(__name__)
@@ -41,8 +40,7 @@ class SimulatorMNE:
             try:
                 self._sim._mne_simulator = MNESimulator(fwd=self._sim.mne_fwd, src=src, sampling_rate=self._sim.sampling_rate)
                 logger.info("MNE仿真器初始化成功")
-                # 更新通道映射
-                self._update_eeg_channel_mapping(self._sim.mne_fwd)
+                self.refresh_channel_mapping()
             except Exception as e:
                 logger.error(f"MNE仿真器初始化失败: {e}")
                 self._sim._mne_simulator = None
@@ -62,11 +60,10 @@ class SimulatorMNE:
                 self._sim._mne_simulator = MNESimulator(
                     fwd, src=src, sampling_rate=self._sim.sampling_rate
                 )
-                self._sim.signal_page.set_montage_from_info(self._sim.mne_info)
+                self._sim.ui._sync_heatmap_montage()
                 self._sim.electrode_channels_page._update_channel_list()
 
-                # 更新通道映射（标准10-20命名 -> MNE前向模型命名）
-                self._update_eeg_channel_mapping(fwd)
+                self.refresh_channel_mapping()
 
                 logger.info(f"正向模型加载成功: {len(fwd['info']['ch_names'])} 通道")
             else:
@@ -78,58 +75,40 @@ class SimulatorMNE:
             logger.error(f"MNE数据加载失败: {e}", exc_info=True)
             raise
 
+    def _get_ui_montage(self):
+        """当前 UI 选中的电极 montage，无则回退 10-20"""
+        if hasattr(self._sim, 'electrode_channels_page'):
+            montage = self._sim.electrode_channels_page.get_current_montage()
+            if montage is not None:
+                return montage
+        return resolve_standard_montage('standard_1020')
+
+    def refresh_channel_mapping(self):
+        """根据当前 montage 与前向模型重建通道映射"""
+        if self._sim.mne_fwd is None:
+            return
+        self._update_eeg_channel_mapping(self._sim.mne_fwd)
+
     def _update_eeg_channel_mapping(self, fwd):
-        """根据前向模型创建通道名称映射
-
-        将标准10-20命名（如Cz, Pz等）映射到MNE前向模型的通道命名（如EEG 001等）
-        同时添加直接名称匹配作为回退
-        """
+        """根据前向模型 + 当前 UI montage 创建通道映射"""
         try:
-            import numpy as np
-            from collections import defaultdict
+            montage = self._get_ui_montage()
+            montage_key = (
+                self._sim.electrode_channels_page.get_montage_key()
+                if hasattr(self._sim, 'electrode_channels_page') else 'standard_1020'
+            )
 
-            info = fwd['info']
-            ch_names = info['ch_names']
+            self._sim.eeg_channel_mapping = build_eeg_channel_mapping(fwd, montage)
+            self._sim._logged_missing_channels = set()
 
-            # 获取标准10-20 montage
-            montage_1020 = mne.channels.make_standard_montage('standard_1020')
-            montage_positions = montage_1020.get_positions()['ch_pos']
-
-            # 创建反向映射: 标准命名 -> MNE通道
-            mne_by_distance = defaultdict(list)  # std_name -> [(mne_ch, distance), ...]
-
-            for i, mne_ch in enumerate(ch_names):
-                loc = np.array(info['chs'][i]['loc'][:3])
-
-                # 找到最近的标准电极
-                min_dist = float('inf')
-                closest_std = None
-
-                for std_name, std_pos in montage_positions.items():
-                    dist = np.linalg.norm(loc - std_pos)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_std = std_name
-
-                if min_dist < 0.07 and closest_std:  # 7cm阈值
-                    mne_by_distance[closest_std].append((mne_ch, min_dist))
-
-            # 为每个标准命名选择距离最近的MNE通道
-            self._sim.eeg_channel_mapping = {}
-            for std_name, candidates in mne_by_distance.items():
-                best_match = min(candidates, key=lambda x: x[1])
-                self._sim.eeg_channel_mapping[std_name] = best_match[0]
-
-            # 添加直接名称匹配：如果MNE通道名本身就是标准命名，直接映射
-            for ch_name in ch_names:
-                if ch_name in montage_positions and ch_name not in self._sim.eeg_channel_mapping:
-                    self._sim.eeg_channel_mapping[ch_name] = ch_name
-
-            logger.info(f"EEG通道映射创建成功: {len(self._sim.eeg_channel_mapping)} 个通道")
-            # 记录一些映射示例
-            sample_items = list(self._sim.eeg_channel_mapping.items())[:5]
-            for std_name, mne_ch in sample_items:
-                logger.debug(f"  {std_name} -> {mne_ch}")
+            logger.info(
+                f"EEG通道映射: montage={montage_key}, "
+                f"{len(self._sim.eeg_channel_mapping)} 个通道"
+            )
+            for ch in (self._sim.selected_channels or [])[:5]:
+                mapped = self._sim.eeg_channel_mapping.get(ch)
+                if mapped:
+                    logger.debug(f"  {ch} -> {mapped}")
 
         except Exception as e:
             logger.error(f"创建通道映射失败: {e}")
