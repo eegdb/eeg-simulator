@@ -32,8 +32,11 @@ class SimulatorBuffers:
             self._sim._mne_simulator.sampling_rate = sr
 
     def _on_time_window_changed(self, _value):
-        """时间窗口改变时同步环形缓冲区大小"""
-        self._resize_signal_buffers()
+        """时间窗口改变时同步环形缓冲区并立即刷新波形"""
+        preserve = self._sim.is_running
+        self._resize_signal_buffers(preserve_recent=preserve)
+        if hasattr(self._sim, 'simulation'):
+            self._sim.simulation._update_plots()
 
     def _compute_buffer_size(self) -> int:
         """按显示时间窗口与采样率计算缓冲区长度"""
@@ -42,19 +45,38 @@ class SimulatorBuffers:
             time_window = self._sim.signal_page.time_window_spin.value()
         return max(int(time_window * self._sim.sampling_rate), 256)
 
-    def _resize_signal_buffers(self):
-        """重建环形缓冲区（运行中不重设，避免打断仿真）"""
-        if self._sim.is_running:
-            return
+    @staticmethod
+    def _resize_array_preserve_tail(old: np.ndarray, new_size: int) -> np.ndarray:
+        """调整数组长度，保留末尾最近的数据"""
+        new_arr = np.zeros(new_size)
+        if old.size > 0:
+            keep = min(old.size, new_size)
+            new_arr[-keep:] = old[-keep:]
+        return new_arr
+
+    def _resize_signal_buffers(self, preserve_recent: bool = False):
+        """重建环形缓冲区；运行中可保留最近数据以支持实时改时间窗"""
         new_size = self._compute_buffer_size()
         if new_size == self._sim.buffer_size and self._sim.time_buffer.size == new_size:
             return
+
+        if preserve_recent and self._sim.time_buffer.size > 0:
+            self._sim.time_buffer = self._resize_array_preserve_tail(
+                self._sim.time_buffer, new_size)
+            for ch in list(self._sim.eeg_buffer.keys()):
+                self._sim.eeg_buffer[ch] = self._resize_array_preserve_tail(
+                    self._sim.eeg_buffer[ch], new_size)
+            for dipole_id in list(self._sim.signal_buffer.keys()):
+                self._sim.signal_buffer[dipole_id] = self._resize_array_preserve_tail(
+                    self._sim.signal_buffer[dipole_id], new_size)
+        else:
+            self._sim.time_buffer = np.zeros(new_size)
+            for ch in list(self._sim.eeg_buffer.keys()):
+                self._sim.eeg_buffer[ch] = np.zeros(new_size)
+            for dipole_id in list(self._sim.signal_buffer.keys()):
+                self._sim.signal_buffer[dipole_id] = np.zeros(new_size)
+
         self._sim.buffer_size = new_size
-        self._sim.time_buffer = np.zeros(self._sim.buffer_size)
-        for ch in list(self._sim.eeg_buffer.keys()):
-            self._sim.eeg_buffer[ch] = np.zeros(self._sim.buffer_size)
-        for dipole_id in list(self._sim.signal_buffer.keys()):
-            self._sim.signal_buffer[dipole_id] = np.zeros(self._sim.buffer_size)
         logger.debug(f"信号缓冲区已调整为 {self._sim.buffer_size} 点")
 
     def _on_layout_changed(self, layout_key):

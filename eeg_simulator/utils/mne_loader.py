@@ -23,12 +23,11 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
-# 经典 10-20 十九导（UI「10-20 系统」实际使用的子集）
-# MNE 的 standard_1020 现含 90+ 通道且含 T3/T7 等同位置别名，不宜直接用于 UI
+# 经典 10-20 常用导联（UI「10-20 系统」子集；含 Oz 以支持枕叶 α 等场景）
 CLASSIC_1020_CHANNELS = [
     'Fp1', 'Fp2', 'F7', 'F3', 'Fz', 'F4', 'F8',
     'T3', 'C3', 'Cz', 'C4', 'T4',
-    'T5', 'P3', 'Pz', 'P4', 'T6', 'O1', 'O2',
+    'T5', 'P3', 'Pz', 'P4', 'T6', 'O1', 'Oz', 'O2',
 ]
 
 
@@ -238,7 +237,7 @@ def build_label_source_map(loaded_src, subjects_dir, subject):
     return src_labels, label_source_map
 
 
-def build_eeg_channel_mapping(fwd, montage=None, warn_dist_m=0.12):
+def build_eeg_channel_mapping(fwd, montage=None, extra_channels=None, warn_dist_m=0.12):
     """将 UI montage 通道名映射到前向模型 EEG 传感器名（3D 最近邻）。
 
     通用方法，适用于 MNE 内置 montage（10-20、10-10、Biosemi、EGI、Easycap 等），
@@ -247,6 +246,7 @@ def build_eeg_channel_mapping(fwd, montage=None, warn_dist_m=0.12):
     Args:
         fwd: MNE Forward 对象
         montage: mne.channels.DigMontage；None 时使用 standard_1020
+        extra_channels: 额外需映射的 UI 通道名（如已选但不在 montage 子集中）
         warn_dist_m: 超过该距离（米）的映射记 debug 日志
 
     Returns:
@@ -274,25 +274,54 @@ def build_eeg_channel_mapping(fwd, montage=None, warn_dist_m=0.12):
     fwd_ch_names = {name for name, _ in sensor_locs}
     mapping = {}
 
-    for ch_name in montage.ch_names:
+    def _map_by_nearest(ch_name, positions):
         if ch_name in fwd_ch_names:
-            mapping[ch_name] = ch_name
-            continue
-        if ch_name not in montage_positions:
-            continue
-
-        std_pos = np.asarray(montage_positions[ch_name], dtype=float)
+            return ch_name, 0.0
+        if ch_name not in positions:
+            return None, None
+        std_pos = np.asarray(positions[ch_name], dtype=float)
         best_ch, best_dist = None, float('inf')
         for sensor_ch, loc in sensor_locs:
             dist = float(np.linalg.norm(loc - std_pos))
             if dist < best_dist:
                 best_dist, best_ch = dist, sensor_ch
+        return best_ch, best_dist
+
+    for ch_name in montage.ch_names:
+        if ch_name in mapping:
+            continue
+        if ch_name in fwd_ch_names:
+            mapping[ch_name] = ch_name
+            continue
+        best_ch, best_dist = _map_by_nearest(ch_name, montage_positions)
         if best_ch is not None:
             mapping[ch_name] = best_ch
             if best_dist > warn_dist_m:
                 logger.debug(
                     f"  {ch_name} -> {best_ch} (距离 {best_dist * 100:.1f} cm)"
                 )
+
+    # 已选通道可能不在当前 montage 子集中，用完整 standard_1020 位置补映射
+    if extra_channels:
+        fallback_positions = montage_positions
+        try:
+            full_1020 = mne.channels.make_standard_montage('standard_1020')
+            fallback_positions = {
+                **full_1020.get_positions()['ch_pos'],
+                **montage_positions,
+            }
+        except Exception:
+            pass
+        for ch_name in extra_channels:
+            if ch_name in mapping:
+                continue
+            best_ch, best_dist = _map_by_nearest(ch_name, fallback_positions)
+            if best_ch is not None:
+                mapping[ch_name] = best_ch
+                if best_dist > warn_dist_m:
+                    logger.debug(
+                        f"  {ch_name} -> {best_ch} (距离 {best_dist * 100:.1f} cm, extra)"
+                    )
 
     for sensor_ch, _ in sensor_locs:
         if sensor_ch in montage_positions and sensor_ch not in mapping:

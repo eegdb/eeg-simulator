@@ -46,6 +46,7 @@ class SimulatorProject:
             self._sim.current_project_path = project_path
             self._clear_all_data()
             self._update_window_title()
+            self._sim.ui._update_status_bar()
             QMessageBox.information(self._sim, tr('success'), tr('msg_project_created', project_name))
 
     def _project_dialog_start_dir(self) -> str:
@@ -146,7 +147,8 @@ class SimulatorProject:
         if hasattr(self._sim, 'electrode_channels_page'):
             selected_channels = self._sim.electrode_channels_page.get_selected_channels()
             self._sim.selected_channels = selected_channels
-            electrode_montage = self._sim.electrode_channels_page.get_montage_key()
+        if hasattr(self._sim, 'source_page'):
+            electrode_montage = self._sim.source_page.get_montage_key()
 
         project_data = {
             "patches": patches_data,
@@ -332,26 +334,10 @@ class SimulatorProject:
                 fwd_path = source_space_info.get('fwd_path')
                 if fwd_path and os.path.exists(fwd_path):
                     try:
-                        self._sim.mne.load_mne_data(fwd_path)
+                        self._sim.mne.load_forward_model(fwd_path)
                         logger.info(f"自动加载前向模型: {fwd_path}")
                     except Exception as e:
                         logger.warning(f"自动加载前向模型失败: {e}")
-                elif src_filename:
-                    fwd_mapping = {
-                        'sample-oct-6-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                        'sample-oct-6-orig-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                        'sample-fsaverage-ico-5-src.fif': 'sample_audvis-eeg-ico-5-fwd.fif',
-                    }
-                    fwd_filename = fwd_mapping.get(src_filename)
-                    if fwd_filename:
-                        try:
-                            data_path = mne.datasets.sample.data_path()
-                            fwd_path = os.path.join(data_path, 'MEG', 'sample', fwd_filename)
-                            if os.path.exists(fwd_path):
-                                self._sim.mne.load_mne_data(fwd_path)
-                                logger.info(f"自动加载前向模型: {fwd_filename}")
-                        except Exception as e:
-                            logger.warning(f"自动加载前向模型失败: {e}")
             else:
                 logger.warning(f"Source Space 文件不存在: {src_path}")
         except Exception as e:
@@ -415,10 +401,13 @@ class SimulatorProject:
                 self._sim.buffers._resize_signal_buffers()
 
         # 更新电极通道页面
-        if hasattr(self._sim, 'electrode_channels_page'):
+        if hasattr(self._sim, 'source_page'):
             montage_key = getattr(self._sim, '_saved_electrode_montage', None)
             if montage_key:
-                self._sim.electrode_channels_page.set_montage_key(montage_key)
+                self._sim.source_page.set_montage_key(montage_key)
+            else:
+                self._sim.source_page.sync_montage_to_electrode_page()
+        if hasattr(self._sim, 'electrode_channels_page'):
             self._sim.electrode_channels_page._update_channel_list()
             if self._sim.selected_channels:
                 self._sim.electrode_channels_page.set_selected_channels(self._sim.selected_channels)

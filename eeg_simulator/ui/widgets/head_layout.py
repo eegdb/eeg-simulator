@@ -65,6 +65,8 @@ class HeatmapOverlayWidget(QWidget):
         self._activity_values = None
         self._channel_names = None
         self._montage = None
+        self._forward_info = None
+        self._plot_mode = 'montage'
         self._pixmap = None
         
     def set_montage(self, montage):
@@ -73,15 +75,20 @@ class HeatmapOverlayWidget(QWidget):
         self._update_plot()
         
     def update_heatmap(self, activity_values, channel_names=None):
-        """更新热力图数据
-        
-        Args:
-            activity_values: 各通道活动强度
-            channel_names: 与 activity_values 对应的通道名；不传则假定与 montage 顺序一致
-        """
+        """更新热力图数据（10-10 montage 坐标）"""
+        self._plot_mode = 'montage'
+        self._forward_info = None
         self._activity_values = activity_values
         self._channel_names = list(channel_names) if channel_names else None
         self._update_plot()
+
+    def update_heatmap_forward(self, activity_values, info):
+        """更新热力图（使用前向模型原生 EEG 电极位置，空间更准确）"""
+        self._plot_mode = 'forward'
+        self._forward_info = info
+        self._activity_values = activity_values
+        self._channel_names = None
+        self._update_plot_forward()
 
     def _prepare_plot_channels_and_data(self):
         """准备无重叠、与数据对齐的通道名和数值"""
@@ -156,7 +163,7 @@ class HeatmapOverlayWidget(QWidget):
                 axes=ax,
                 show=False,
                 contours=8,
-                cmap='RdBu_r',
+                cmap='hot',
                 vlim=(0, 1),
                 outlines='head',
                 extrapolate='head',
@@ -188,6 +195,68 @@ class HeatmapOverlayWidget(QWidget):
             logger.warning(f"绘制热力图失败: {e}")
             # 如果失败，尝试使用简化的绘制方法
             self._update_plot_simple()
+
+    def _update_plot_forward(self):
+        """使用前向模型 Info 中的 EEG 位置绘制地形图"""
+        if self._forward_info is None or self._activity_values is None:
+            self._pixmap = None
+            self.update()
+            return
+        try:
+            picks = mne.pick_types(self._forward_info, meg=False, eeg=True, exclude=[])
+            data = np.asarray(self._activity_values, dtype=float)
+            if data.size != len(picks):
+                n = min(data.size, len(picks))
+                data = data[:n]
+                picks = picks[:n]
+            if len(picks) < 3:
+                self._pixmap = None
+                self.update()
+                return
+
+            widget_size = min(self.width(), self.height())
+            dpi = 100
+            figsize = max(2, widget_size / dpi) if widget_size > 0 else 4
+
+            fig = plt.figure(figsize=(figsize, figsize), dpi=dpi, facecolor='#1a1a1a')
+            ax = fig.add_subplot(111)
+            ax.set_facecolor('#1a1a1a')
+
+            info_picked = mne.pick_info(self._forward_info, picks)
+            pos, _ = mne.viz.topomap._get_pos_outlines(info_picked, 'eeg', sphere=None)
+
+            mne.viz.plot_topomap(
+                data,
+                pos,
+                axes=ax,
+                show=False,
+                contours=8,
+                cmap='hot',
+                vlim=(0, 1),
+                outlines='head',
+                extrapolate='head',
+                res=128,
+            )
+
+            fig.patch.set_alpha(1.0)
+            ax.axis('off')
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=dpi,
+                       facecolor='#1a1a1a',
+                       edgecolor='none',
+                       bbox_inches='tight',
+                       pad_inches=0)
+            buf.seek(0)
+            image = QImage.fromData(buf.getvalue())
+            self._pixmap = QPixmap.fromImage(image)
+            plt.close(fig)
+            buf.close()
+            self.update()
+        except Exception as e:
+            logger.warning(f"绘制 forward 热力图失败: {e}")
+            self._pixmap = None
+            self.update()
     
     def _update_plot_simple(self):
         """使用简化的方法绘制等高线地形图"""
@@ -217,7 +286,7 @@ class HeatmapOverlayWidget(QWidget):
             
             # 填充等高线（颜色区域）
             levels = np.linspace(0, 1, 15)
-            contourf = ax.tricontourf(tri, data, levels=levels, cmap='RdBu_r', vmin=0, vmax=1)
+            contourf = ax.tricontourf(tri, data, levels=levels, cmap='hot', vmin=0, vmax=1)
             
             # 绘制等高线（线条）
             contour = ax.tricontour(tri, data, levels=8, colors='black', linewidths=0.5)
@@ -280,6 +349,8 @@ class HeatmapOverlayWidget(QWidget):
         """清除热力图"""
         self._activity_values = None
         self._channel_names = None
+        self._forward_info = None
+        self._plot_mode = 'montage'
         self._pixmap = None
         self.update()
     
@@ -425,6 +496,11 @@ class HeadLayoutWidget(QWidget):
         """获取所有可用布局名称"""
         return {key: self.montage_display_name(key) for key in self.BUILTIN_MONTAGE_KEYS}
 
+    @classmethod
+    def get_available_montage_options(cls):
+        """获取 montage 选项（供源配置页下拉框使用）"""
+        return {key: cls.montage_display_name(key) for key in cls.BUILTIN_MONTAGE_KEYS}
+
     def __init__(self, parent=None, montage_name='standard_1020'):
         super().__init__(parent)
         self.setMinimumSize(250, 250)
@@ -525,11 +601,10 @@ class HeadLayoutWidget(QWidget):
 
 
 class HeadLayoutSelector(QWidget):
-    """头部布局选择器 - 包含电极布局和热力图叠加"""
+    """头部布局选择器 - 电极预览与热力图叠加（montage 在源配置页选择）"""
     
-    def __init__(self, parent=None, on_layout_changed=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.on_layout_changed = on_layout_changed
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -552,21 +627,11 @@ class HeadLayoutSelector(QWidget):
         self.heatmap_widget.setParent(self.overlay_container)
         self.heatmap_widget.setGeometry(self.head_widget.geometry())
         
-        # 布局选择下拉框
-        self.combo = QComboBox()
-        self._populate_montage_combo()
-        
-        self.combo.currentIndexChanged.connect(self._on_selection_changed)
-        
         # 显示标签复选框
         self.show_labels_cb = QCheckBox(tr('label_show_labels'))
         self.show_labels_cb.setChecked(True)
         self.show_labels_cb.stateChanged.connect(self._on_show_labels_changed)
         
-        # 添加到布局
-        self.layout_label = QLabel(tr('label_electrode_layout'))
-        layout.addWidget(self.layout_label)
-        layout.addWidget(self.combo)
         layout.addWidget(self.overlay_container, 1)
         
         # 复选框布局
@@ -583,49 +648,30 @@ class HeadLayoutSelector(QWidget):
         # 确保热力图覆盖整个容器
         self.heatmap_widget.setGeometry(self.overlay_container.rect())
         
-    def _on_selection_changed(self, index):
-        """选择改变时"""
-        layout_key = self.combo.currentData()
-        if layout_key:
-            success = self.head_widget.set_montage(layout_key)
-            if success:
-                # 同步montage到热力图
-                self.heatmap_widget.set_montage(self.head_widget._montage)
-                if self.on_layout_changed:
-                    self.on_layout_changed(layout_key)
-    
     def _on_show_labels_changed(self, state):
         """显示标签选项改变时"""
         self.head_widget.set_show_labels(state == Qt.CheckState.Checked.value)
-    
-    def _populate_montage_combo(self):
-        """填充 montage 下拉框"""
-        current = self.combo.currentData() if self.combo.count() else None
-        self.combo.blockSignals(True)
-        self.combo.clear()
-        for key, name in self.head_widget.get_available_montages().items():
-            self.combo.addItem(name, key)
-        if current:
-            idx = self.combo.findData(current)
-            if idx >= 0:
-                self.combo.setCurrentIndex(idx)
-        self.combo.blockSignals(False)
 
+    def apply_montage_key(self, montage_key: str) -> bool:
+        """应用 montage（由源配置页调用）"""
+        if not montage_key:
+            return False
+        success = self.head_widget.set_montage(montage_key)
+        if success:
+            self.heatmap_widget.set_montage(self.head_widget._montage)
+        return success
+    
     def update_texts(self):
         """更新界面文本（语言切换时调用）"""
-        self.layout_label.setText(tr('label_electrode_layout'))
         self.show_labels_cb.setText(tr('label_show_labels'))
-        self._populate_montage_combo()
     
     def get_head_widget(self):
         """获取头部组件"""
         return self.head_widget
     
     def set_montage(self, montage_name):
-        """设置当前 montage"""
-        index = self.combo.findData(montage_name)
-        if index >= 0:
-            self.combo.setCurrentIndex(index)
+        """设置当前 montage（向后兼容）"""
+        return self.apply_montage_key(montage_name)
     
     def set_from_info(self, info):
         """根据 MNE Info 对象设置布局
@@ -676,7 +722,7 @@ class HeadLayoutSelector(QWidget):
             montage_name = 'standard_1020'
         
         # 设置 montage
-        self.set_montage(montage_name)
+        self.apply_montage_key(montage_name)
     
     def update_heatmap(self, activity_values, channel_names=None):
         """更新热力图数据"""

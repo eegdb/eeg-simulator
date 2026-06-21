@@ -3,11 +3,14 @@
 import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QPushButton, QLabel, QComboBox, QDoubleSpinBox,
-                             QFrame, QCheckBox, QSpinBox)
+                             QFrame, QCheckBox, QSpinBox, QMessageBox,
+                             QApplication, QProgressDialog)
 from PyQt6.QtCore import Qt
 
 from ..themes import get_color
 from ..widgets.navigation_view import NavigationPage
+from ..widgets.head_layout import HeadLayoutWidget
+from ...utils.mne_loader import resolve_standard_montage
 from ...utils import tr, get_logger
 
 logger = get_logger(__name__)
@@ -48,6 +51,8 @@ class SourceConfigPage(NavigationPage):
         self.label_source_map = {'lh': {}, 'rh': {}}
         self.subject = None
         self.active_noise_configs = []
+        self._montage_key = 'standard_1020'
+        self._montage = resolve_standard_montage(self._montage_key)
         
         self._setup_content()
     
@@ -96,7 +101,59 @@ class SourceConfigPage(NavigationPage):
         src_layout.addWidget(self.src_info_label)
         
         layout.addWidget(self.mne_group)
-        
+
+        # ========== 电极 Montage ==========
+        self.montage_group = QGroupBox(tr('panel_electrode_montage'))
+        montage_layout = QVBoxLayout(self.montage_group)
+
+        montage_row = QHBoxLayout()
+        self.montage_label = QLabel(tr('label_electrode_layout'))
+        montage_row.addWidget(self.montage_label)
+        self.montage_combo = QComboBox()
+        self.montage_combo.setToolTip(tr('tooltip_select_montage'))
+        self._populate_montage_combo()
+        self.montage_combo.currentIndexChanged.connect(self._on_montage_combo_changed)
+        montage_row.addWidget(self.montage_combo, 1)
+        montage_layout.addLayout(montage_row)
+
+        self.montage_hint_label = QLabel(tr('montage_select_hint'))
+        self.montage_hint_label.setWordWrap(True)
+        self.montage_hint_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
+        montage_layout.addWidget(self.montage_hint_label)
+
+        layout.addWidget(self.montage_group)
+
+        # ========== 前向模型 ==========
+        self.fwd_group = QGroupBox(tr('panel_forward_model'))
+        fwd_layout = QVBoxLayout(self.fwd_group)
+
+        self.fwd_workflow_frame = QFrame()
+        self.fwd_workflow_frame.setStyleSheet(f"""
+            background-color: {get_color('bg_input')};
+            border-radius: 8px;
+            border: 1px solid {get_color('border')};
+        """)
+        fwd_workflow_inner = QVBoxLayout(self.fwd_workflow_frame)
+        fwd_workflow_inner.setContentsMargins(12, 10, 12, 10)
+        self.fwd_workflow_label = QLabel(tr('fwd_workflow_hint'))
+        self.fwd_workflow_label.setWordWrap(True)
+        self.fwd_workflow_label.setStyleSheet(f"color: {get_color('blue')}; font-size: 12px;")
+        fwd_workflow_inner.addWidget(self.fwd_workflow_label)
+        fwd_layout.addWidget(self.fwd_workflow_frame)
+
+        self.compute_fwd_btn = QPushButton(tr('btn_compute_forward'))
+        self.compute_fwd_btn.setStyleSheet(get_primary_btn_style())
+        self.compute_fwd_btn.setToolTip(tr('tooltip_compute_forward'))
+        self.compute_fwd_btn.clicked.connect(self._on_compute_forward)
+        fwd_layout.addWidget(self.compute_fwd_btn)
+
+        self.fwd_info_label = QLabel(tr('fwd_not_loaded'))
+        self.fwd_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
+        self.fwd_info_label.setWordWrap(True)
+        fwd_layout.addWidget(self.fwd_info_label)
+
+        layout.addWidget(self.fwd_group)
+
         # ========== Patch 管理 ==========
         self.patch_group = QGroupBox(tr('panel_patch'))
         patch_layout = QVBoxLayout(self.patch_group)
@@ -267,6 +324,61 @@ class SourceConfigPage(NavigationPage):
 
         self.knn_spin.valueChanged.connect(self._on_mne_coupling_params_changed)
         self.decay_spin.valueChanged.connect(self._on_mne_coupling_params_changed)
+
+    def _populate_montage_combo(self):
+        """填充 montage 下拉框"""
+        current = self._montage_key
+        self.montage_combo.blockSignals(True)
+        self.montage_combo.clear()
+        for key, name in HeadLayoutWidget.get_available_montage_options().items():
+            self.montage_combo.addItem(name, key)
+        idx = self.montage_combo.findData(current)
+        if idx >= 0:
+            self.montage_combo.setCurrentIndex(idx)
+        self.montage_combo.blockSignals(False)
+
+    def _on_montage_combo_changed(self, _index: int):
+        key = self.montage_combo.currentData()
+        if key and key != self._montage_key:
+            self.set_montage_key(key)
+
+    def get_montage_key(self) -> str | None:
+        return self._montage_key
+
+    def get_current_montage(self):
+        return self._montage
+
+    def set_montage_key(self, montage_key: str, sync_combo: bool = True):
+        """设置 montage 并同步到电极预览页"""
+        if not montage_key:
+            return
+        try:
+            self._montage = resolve_standard_montage(montage_key)
+            self._montage_key = montage_key
+        except Exception as e:
+            logger.warning(f"加载 montage 失败 {montage_key}: {e}")
+            return
+        if sync_combo:
+            self.montage_combo.blockSignals(True)
+            idx = self.montage_combo.findData(montage_key)
+            if idx >= 0:
+                self.montage_combo.setCurrentIndex(idx)
+            self.montage_combo.blockSignals(False)
+        self.sync_montage_to_electrode_page()
+
+    def sync_montage_to_electrode_page(self):
+        """将当前 montage 同步到电极页预览与通道列表"""
+        sim = self.parent_simulator
+        if hasattr(sim, 'electrode_channels_page'):
+            ep = sim.electrode_channels_page
+            if hasattr(ep, 'head_selector'):
+                ep.head_selector.apply_montage_key(self._montage_key)
+            ep._update_channel_list()
+        if getattr(sim, 'mne_fwd', None) is not None and hasattr(sim, 'mne'):
+            sim.mne.refresh_channel_mapping()
+        self.update_forward_status()
+        if hasattr(sim, 'ui'):
+            sim.ui._sync_heatmap_montage()
     
     def _on_mne_coupling_params_changed(self):
         if hasattr(self.parent_simulator, 'signal'):
@@ -315,67 +427,79 @@ class SourceConfigPage(NavigationPage):
             
             self.src_info_label.setText(self._get_src_info_text(self.loaded_src))
             self.src_info_label.setStyleSheet(f"color: {get_color('accent')}; font-size: 12px;")
-            
-            # 自动加载匹配的正向模型（优先使用EEG版本）
-            fwd_mapping = {
-                'sample-oct-6-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',  # EEG only
-                'sample-oct-6-orig-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                'volume-7mm-src.fif': None,
-                'sample-fsaverage-ico-5-src.fif': 'sample_audvis-eeg-ico-5-fwd.fif',
-            }
-            # sample-all-src 为全皮层高密度网格，Sample 数据集无配套前向模型，不可与 oct-6-fwd 联用
-            incompatible_src = {
-                'sample-all-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-            }
-            # 如果EEG版本不存在，回退到MEG+EEG版本
-            fwd_mapping_fallback = {
-                'sample-oct-6-src.fif': 'sample_audvis-meg-eeg-oct-6-fwd.fif',
-                'sample-oct-6-orig-src.fif': 'sample_audvis-meg-eeg-oct-6-fwd.fif',
-                'sample-fsaverage-ico-5-src.fif': 'sample_audvis-meg-eeg-ico-5-fwd.fif',
-            }
-            if src_filename in incompatible_src:
-                logger.warning(
-                    f"{src_filename} 为全皮层源空间，不能自动加载 oct-6 前向模型；"
-                    "请改用 sample-oct-6-src.fif，或自行计算匹配的前向模型"
-                )
+
+            if src_filename == 'sample-all-src.fif':
                 QMessageBox.warning(
                     self,
                     tr('warning'),
                     tr('msg_all_src_no_fwd', src_filename),
                 )
-            fwd_filename = fwd_mapping.get(src_filename)
-            if fwd_filename:
-                fwd_path = os.path.join(data_path, 'MEG', 'sample', fwd_filename)
-                if os.path.exists(fwd_path):
-                    try:
-                        self.parent_simulator.mne.load_mne_data(fwd_path)
-                        logger.info(f"已加载EEG前向模型: {fwd_filename}")
-                    except Exception as fwd_e:
-                        logger.warning(f"EEG前向模型加载失败: {fwd_e}")
-                else:
-                    # 回退到MEG+EEG版本
-                    fwd_filename_fallback = fwd_mapping_fallback.get(src_filename)
-                    if fwd_filename_fallback:
-                        fwd_path_fallback = os.path.join(data_path, 'MEG', 'sample', fwd_filename_fallback)
-                        if os.path.exists(fwd_path_fallback):
-                            try:
-                                self.parent_simulator.mne.load_mne_data(fwd_path_fallback)
-                                logger.info(f"已加载MEG+EEG前向模型: {fwd_filename_fallback}")
-                            except Exception as fwd_e2:
-                                logger.warning(f"MEG+EEG前向模型加载失败: {fwd_e2}")
-            elif src_filename == 'volume-7mm-src.fif':
-                QMessageBox.information(
-                    self,
-                    tr('info'),
-                    tr('msg_fwd_manual_required', src_filename),
-                )
-            
+
             QMessageBox.information(self, tr('success'),
                 tr('msg_load_success', 'Sample', total_vertices))
             
         except Exception as e:
             logger.error(f"源空间加载失败: {str(e)}", exc_info=True)
             QMessageBox.critical(self, tr('error'), tr('msg_load_failed', str(e)))
+
+    def _on_compute_forward(self):
+        """根据当前 montage 计算前向模型"""
+        if self.loaded_src is None:
+            QMessageBox.warning(self, tr('warning'), tr('msg_no_src_space'))
+            return
+
+        montage_key = self.get_montage_key()
+        if not montage_key:
+            QMessageBox.warning(self, tr('warning'), tr('msg_select_montage_first'))
+            return
+
+        progress = QProgressDialog(tr('msg_computing_forward'), None, 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            save_dir = self.parent_simulator.current_project_path
+            fwd_path = self.parent_simulator.mne.compute_forward_from_montage(save_dir)
+            import mne
+            fwd = self.parent_simulator.mne_fwd
+            n_eeg = len(mne.pick_types(fwd['info'], meg=False, eeg=True, exclude=[]))
+            QMessageBox.information(
+                self,
+                tr('success'),
+                tr('msg_fwd_computed', os.path.basename(fwd_path), montage_key, n_eeg),
+            )
+        except Exception as e:
+            logger.error(f"前向模型计算失败: {e}", exc_info=True)
+            QMessageBox.critical(self, tr('error'), tr('msg_fwd_compute_failed', str(e)))
+        finally:
+            progress.close()
+
+    def update_forward_status(self):
+        """更新前向模型状态标签"""
+        text, color = self._forward_status_text()
+        self.fwd_info_label.setText(text)
+        self.fwd_info_label.setStyleSheet(f"color: {color}; font-size: 12px;")
+
+    def _forward_status_text(self) -> tuple[str, str]:
+        import mne
+        sim = self.parent_simulator
+        path = getattr(sim, 'mne_fwd_path', None)
+        fwd = getattr(sim, 'mne_fwd', None)
+        if fwd is None or not path:
+            return tr('fwd_not_loaded'), get_color('text_muted')
+
+        n_eeg = len(mne.pick_types(fwd['info'], meg=False, eeg=True, exclude=[]))
+        lines = [tr('fwd_loaded_info', os.path.basename(path), n_eeg)]
+
+        montage_key = ''
+        if hasattr(sim, 'source_page'):
+            montage_key = sim.source_page.get_montage_key() or ''
+        if montage_key:
+            lines.append(tr('fwd_status_montage', montage_key))
+
+        return '\n'.join(lines), get_color('accent')
     
     def _load_labels(self, subjects_dir, subject):
         """加载解剖学标签"""
@@ -567,7 +691,7 @@ class SourceConfigPage(NavigationPage):
         from ..themes import get_color
         
         # 更新各组样式
-        for group in [self.mne_group, self.patch_group, self.bem_group, 
+        for group in [self.mne_group, self.montage_group, self.fwd_group, self.patch_group, self.bem_group, 
                       self.noise_group, self.coupling_group]:
             if group:
                 group.setStyleSheet(f"""
@@ -583,7 +707,7 @@ class SourceConfigPage(NavigationPage):
                 """)
         
         # 更新按钮样式
-        for btn in [self.sample_btn, self.patch_btn, self.make_bem_btn,
+        for btn in [self.sample_btn, self.compute_fwd_btn, self.patch_btn, self.make_bem_btn,
                     self.manage_noise_btn, self.manage_coupling_btn]:
             if btn:
                 btn.setStyleSheet(f"""
@@ -602,7 +726,18 @@ class SourceConfigPage(NavigationPage):
                 """)
         
         # 更新标签颜色
-        self.src_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
+        if self.loaded_src:
+            self.src_info_label.setStyleSheet(f"color: {get_color('accent')}; font-size: 12px;")
+        else:
+            self.src_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
+        if hasattr(self, 'fwd_workflow_frame'):
+            self.fwd_workflow_frame.setStyleSheet(f"""
+                background-color: {get_color('bg_input')};
+                border-radius: 8px;
+                border: 1px solid {get_color('border')};
+            """)
+            self.fwd_workflow_label.setStyleSheet(f"color: {get_color('blue')}; font-size: 12px;")
+        self.update_forward_status()
         self.patch_count_label.setStyleSheet(f"font-weight: bold; color: {get_color('accent')};")
         self.patch_coverage_label.setStyleSheet(f"font-size: 12px; color: {get_color('text_muted')};")
         self.noise_count_label.setStyleSheet(f"font-weight: bold; color: {get_color('accent')};")
@@ -639,6 +774,12 @@ class SourceConfigPage(NavigationPage):
         
         # 更新组标题
         self.mne_group.setTitle(tr('panel_source_space'))
+        self.montage_group.setTitle(tr('panel_electrode_montage'))
+        self.montage_label.setText(tr('label_electrode_layout'))
+        self.montage_combo.setToolTip(tr('tooltip_select_montage'))
+        self.montage_hint_label.setText(tr('montage_select_hint'))
+        self._populate_montage_combo()
+        self.fwd_group.setTitle(tr('panel_forward_model'))
         self.patch_group.setTitle(tr('panel_patch'))
         self.bem_group.setTitle(tr('bem_conductivity'))
         self.noise_group.setTitle(tr('noise_settings'))
@@ -651,6 +792,9 @@ class SourceConfigPage(NavigationPage):
         
         # 更新按钮文本
         self.sample_btn.setText(tr('btn_load_sample'))
+        self.fwd_workflow_label.setText(tr('fwd_workflow_hint'))
+        self.compute_fwd_btn.setText(tr('btn_compute_forward'))
+        self.compute_fwd_btn.setToolTip(tr('tooltip_compute_forward'))
         self.patch_btn.setText(tr('btn_manage_patches'))
         self.make_bem_btn.setText(tr('bem_make_model'))
         self.manage_noise_btn.setText(tr('btn_manage_noise'))
@@ -661,6 +805,8 @@ class SourceConfigPage(NavigationPage):
             self.src_info_label.setText(self._get_src_info_text(self.loaded_src))
         else:
             self.src_info_label.setText(tr('not_loaded'))
+
+        self.update_forward_status()
         
         # 更新统计信息
         self._update_patch_stats()

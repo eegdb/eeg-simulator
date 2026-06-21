@@ -7,6 +7,7 @@
 """
 
 import numpy as np
+import warnings
 from typing import Dict, List, Optional, Tuple, Union
 import mne
 from ..utils import get_logger
@@ -25,11 +26,11 @@ class MNESimulator:
         """
         Args:
             fwd: MNE 正向模型
-            src: MNE 源空间，如果为 None 则从 fwd['src'] 获取
+            src: UI 加载的源空间（仅用于诊断）；仿真始终使用前向模型内嵌 src
             sampling_rate: 采样率 (Hz)
         """
         self.fwd = fwd
-        self.src = src if src is not None else fwd['src']
+        self.src = src
         self.sampling_rate = sampling_rate
         
         # 提取正向模型信息
@@ -39,6 +40,7 @@ class MNESimulator:
         self._build_source_mapping()
         self._logged_dipole_match = None
         self._loaded_src_verts = None
+        self._forward_vert_positions = None
         self._log_source_space_alignment()
         
     def is_ready(self) -> bool:
@@ -129,6 +131,48 @@ class MNESimulator:
                 f"源空间与前向模型顶点一致: {len(forward)} 个有效顶点"
             )
 
+    def _get_forward_vert_positions(self):
+        """前向模型源空间顶点坐标 (hemi, vertno) -> xyz"""
+        if self._forward_vert_positions is not None:
+            return self._forward_vert_positions
+        positions = {}
+        for hemi_idx, s in enumerate(self.src_space):
+            hemi = 'lh' if hemi_idx == 0 else 'rh'
+            for i, vertno in enumerate(s.get('vertno', ())):
+                positions[(hemi, int(vertno))] = np.asarray(s['rr'][i], dtype=float)
+        self._forward_vert_positions = positions
+        return positions
+
+    def _resolve_dipole_vertex(self, dipole, vert_to_idx, max_snap_dist_m=0.02):
+        """将偶极子顶点解析为前向模型可用顶点（必要时按位置吸附）"""
+        hemi = getattr(dipole, 'hemi', None)
+        vertno = getattr(dipole, 'vertno', None)
+        if hemi is not None and vertno is not None:
+            key = (hemi, int(vertno))
+            if key in vert_to_idx:
+                return key
+
+        position = getattr(dipole, 'position', None)
+        if position is None:
+            return None
+        pos = np.asarray(position, dtype=float)
+        if pos.shape != (3,):
+            return None
+
+        positions = self._get_forward_vert_positions()
+        best_key = None
+        best_dist = float('inf')
+        for key, p in positions.items():
+            if hemi is not None and key[0] != hemi:
+                continue
+            dist = float(np.linalg.norm(p - pos))
+            if dist < best_dist:
+                best_dist = dist
+                best_key = key
+        if best_key is not None and best_dist <= max_snap_dist_m:
+            return best_key
+        return None
+
     def _describe_unmatched_dipole(self, hemi, vertno):
         """推断未匹配原因"""
         if hemi is None or vertno is None:
@@ -173,6 +217,28 @@ class MNESimulator:
                 entry['dipole_id'],
                 reason,
             )
+
+    def find_unmatched_patch_dipoles(self, patches) -> list[dict]:
+        """检查 Patch 偶极子是否可投影到当前前向模型源空间"""
+        vert_to_idx = {}
+        idx = 0
+        for hemi_idx, s in enumerate(self.src_space):
+            hemi = 'lh' if hemi_idx == 0 else 'rh'
+            for vertno in s['vertno']:
+                vert_to_idx[(hemi, int(vertno))] = idx
+                idx += 1
+
+        unmatched = []
+        for patch_id, patch in patches.items():
+            for dipole in getattr(patch, 'dipoles', []):
+                if self._resolve_dipole_vertex(dipole, vert_to_idx) is None:
+                    unmatched.append({
+                        'patch_id': patch_id,
+                        'dipole_id': getattr(dipole, 'id', '?'),
+                        'hemi': getattr(dipole, 'hemi', None),
+                        'vertno': getattr(dipole, 'vertno', None),
+                    })
+        return unmatched
     
     def generate_source_estimate(self, patch_data: Dict, start_time: float, 
                                   n_samples: int) -> Optional[mne.SourceEstimate]:
@@ -218,18 +284,17 @@ class MNESimulator:
             for dipole in dipoles:
                 total_dipoles += 1
                 dipole_id = getattr(dipole, 'id', '?')
-                hemi = getattr(dipole, 'hemi', None)
-                vertno = getattr(dipole, 'vertno', None)
-
-                if hemi is None or vertno is None:
+                resolved = self._resolve_dipole_vertex(dipole, vert_to_idx)
+                if resolved is None:
                     unmatched_dipoles.append({
                         'patch_id': patch_id,
                         'dipole_id': dipole_id,
-                        'hemi': hemi,
-                        'vertno': vertno,
+                        'hemi': getattr(dipole, 'hemi', None),
+                        'vertno': getattr(dipole, 'vertno', None),
                     })
                     continue
 
+                hemi, vertno = resolved
                 data_idx = vert_to_idx.get((hemi, vertno))
                 if data_idx is not None:
                     matched_dipoles += 1
@@ -276,8 +341,14 @@ class MNESimulator:
         try:
             from mne import apply_forward
 
-            with mne.utils.use_log_level('error'):
-                evoked = apply_forward(self.fwd, stc, self.info, verbose=False)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    'ignore',
+                    message='.*maximum current magnitude.*',
+                    category=RuntimeWarning,
+                )
+                with mne.utils.use_log_level('error'):
+                    evoked = apply_forward(self.fwd, stc, self.info, verbose=False)
             
             # 获取传感器数据和通道名称
             sensor_data = evoked.data  # (n_channels, n_times)

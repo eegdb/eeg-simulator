@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QTextEdit, QPushButton, QMessageBox, QWidget
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QShowEvent
 
 from ...utils import tr
 
@@ -114,7 +114,11 @@ class NewProjectDialog(QDialog):
         # 如果有默认值，检查是否可以启用创建按钮
         if default_name:
             self._on_name_changed(default_name)
-    
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        self.name_input.setFocus()
+
     def _on_name_changed(self, text):
         """项目名称改变时更新创建按钮状态和错误提示"""
         name = text.strip()

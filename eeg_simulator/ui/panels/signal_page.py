@@ -234,7 +234,17 @@ class SignalPage(NavigationPage):
         self.heatmap_group.setFixedWidth(270)
         heatmap_layout = QVBoxLayout(self.heatmap_group)
         heatmap_layout.setContentsMargins(4, 4, 4, 4)
-        heatmap_layout.setSpacing(0)
+        heatmap_layout.setSpacing(4)
+
+        band_layout = QHBoxLayout()
+        self.heatmap_band_label = QLabel(tr('label_heatmap_band'))
+        band_layout.addWidget(self.heatmap_band_label)
+        self.heatmap_band_combo = QComboBox()
+        self.heatmap_band_combo.setToolTip(tr('tooltip_heatmap_band'))
+        self._populate_heatmap_band_combo()
+        band_layout.addWidget(self.heatmap_band_combo, 1)
+        heatmap_layout.addLayout(band_layout)
+        self.heatmap_band_combo.currentIndexChanged.connect(self._on_heatmap_band_changed)
         
         self.heatmap_widget = HeatmapOverlayWidget()
         self.heatmap_widget.setFixedSize(250, 250)  # 固定大小
@@ -355,6 +365,34 @@ class SignalPage(NavigationPage):
     def is_heatmap_enabled(self) -> bool:
         return self.show_heatmap_cb.isChecked()
 
+    def _populate_heatmap_band_combo(self, select_key=None):
+        """填充热力图频带下拉列表"""
+        if select_key is None and hasattr(self, 'heatmap_band_combo'):
+            select_key = self.get_heatmap_band()
+        self.heatmap_band_combo.blockSignals(True)
+        self.heatmap_band_combo.clear()
+        for key in ('broadband', 'delta', 'theta', 'alpha', 'beta', 'gamma'):
+            self.heatmap_band_combo.addItem(tr(f'band_{key}'), key)
+        if select_key:
+            idx = self.heatmap_band_combo.findData(select_key)
+            if idx >= 0:
+                self.heatmap_band_combo.setCurrentIndex(idx)
+        self.heatmap_band_combo.blockSignals(False)
+
+    def get_heatmap_band(self) -> str:
+        if not hasattr(self, 'heatmap_band_combo'):
+            return 'alpha'
+        key = self.heatmap_band_combo.currentData()
+        return key if key else 'alpha'
+
+    def _on_heatmap_band_changed(self, _index=None):
+        """切换频带后立即刷新地形图"""
+        if not self.is_heatmap_enabled():
+            return
+        sim = self.parent_simulator
+        if sim.simulation_time > 0 or sim.is_running:
+            sim.simulation._update_heatmap_from_simulation()
+
     def is_fft_enabled(self) -> bool:
         return self.show_fft_cb.isChecked()
 
@@ -461,6 +499,7 @@ class SignalPage(NavigationPage):
             'time_window': self.time_window_spin.value(),
             'show_heatmap': self.is_heatmap_enabled(),
             'show_fft': self.is_fft_enabled(),
+            'heatmap_band': self.get_heatmap_band(),
             'waveform_autoscale': self.is_waveform_autoscale(),
         }
 
@@ -485,6 +524,8 @@ class SignalPage(NavigationPage):
             self.show_heatmap_cb.setChecked(bool(params['show_heatmap']))
         if 'show_fft' in params:
             self.show_fft_cb.setChecked(bool(params['show_fft']))
+        if 'heatmap_band' in params:
+            self._populate_heatmap_band_combo(str(params['heatmap_band']))
         if 'waveform_autoscale' in params:
             self.waveform_autoscale_cb.setChecked(bool(params['waveform_autoscale']))
         self.notch_freq_combo.setEnabled(self.notch_cb.isChecked())
@@ -492,11 +533,25 @@ class SignalPage(NavigationPage):
 
 
     def update_heatmap(self, channel_activities, channel_names=None):
-        """更新热力图"""
+        """更新热力图（montage 模式）"""
         if not self.is_heatmap_enabled():
             return
         if hasattr(self, 'heatmap_widget'):
             self.heatmap_widget.update_heatmap(channel_activities, channel_names)
+
+    def update_heatmap_result(self, result: dict):
+        """更新热力图（自动选择 forward 原生或 montage 模式）"""
+        if not self.is_heatmap_enabled() or not hasattr(self, 'heatmap_widget'):
+            return
+        if result.get('mode') == 'forward' and result.get('info') is not None:
+            self.heatmap_widget.update_heatmap_forward(
+                result['powers'], result['info']
+            )
+        else:
+            self.heatmap_widget.update_heatmap(
+                result.get('powers'), result.get('names')
+            )
+        self.heatmap_widget.repaint()
     
     def clear_heatmap(self):
         """清除热力图"""
@@ -568,6 +623,9 @@ class SignalPage(NavigationPage):
         self.time_window_label.setText(tr('label_time_window'))
         self.show_heatmap_cb.setText(tr('label_show_heatmap'))
         self.show_fft_cb.setText(tr('label_show_fft'))
+        self.heatmap_band_label.setText(tr('label_heatmap_band'))
+        self.heatmap_band_combo.setToolTip(tr('tooltip_heatmap_band'))
+        self._populate_heatmap_band_combo()
         self.waveform_autoscale_cb.setText(tr('label_waveform_autoscale'))
         self.waveform_autoscale_cb.setToolTip(tr('tooltip_waveform_autoscale'))
         

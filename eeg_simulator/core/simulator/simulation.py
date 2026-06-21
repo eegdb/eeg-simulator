@@ -3,7 +3,7 @@
 import time
 
 import numpy as np
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from ...ui.styles import COLORS
 from ...utils import tr, get_logger
@@ -69,6 +69,9 @@ class SimulatorSimulation:
         # 确保热力图 montage 与当前电极布局一致
         if hasattr(self._sim, 'ui'):
             self._sim.ui._sync_heatmap_montage()
+
+        if self._sim.mne_fwd is not None and hasattr(self._sim, 'mne'):
+            self._sim.mne.refresh_channel_mapping()
 
         # 更新UI
         self._sim.status_run.setText("● " + tr('status_running'))
@@ -170,8 +173,9 @@ class SimulatorSimulation:
             # 更新图表
             self._update_plots()
 
-            # 更新热力图（根据配置的时间间隔）
-            if (self._sim.signal_page.is_heatmap_enabled()
+            # 更新热力图（模态对话框打开时跳过，避免干扰输入焦点）
+            if (QApplication.activeModalWidget() is None
+                    and self._sim.signal_page.is_heatmap_enabled()
                     and self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval):
                 self._update_heatmap_from_simulation()
                 self._sim._last_heatmap_update_time = self._sim.simulation_time
@@ -275,6 +279,10 @@ class SimulatorSimulation:
 
     def _update_plots(self):
         """更新波形图 - 缓冲区已包含滤波后的数据，直接显示"""
+        # 模态对话框打开时跳过刷新，避免 pyqtgraph 抢焦点导致输入框无法打字
+        if QApplication.activeModalWidget() is not None:
+            return
+
         time_window = self._sim.signal_page.time_window_spin.value()
         n_samples = int(time_window * self._sim.sampling_rate)
 
@@ -294,26 +302,12 @@ class SimulatorSimulation:
             self._sim._last_fft_update_time = self._sim.simulation_time
 
     def _update_heatmap_from_simulation(self):
-        """根据仿真结果更新热力图"""
-        if not self._sim.selected_channels:
+        """根据仿真结果更新热力图（全 montage 频带功率）"""
+        time_window = self._sim.signal_page.time_window_spin.value()
+        n_samples = int(time_window * self._sim.sampling_rate)
+        result = self._sim.signal.compute_heatmap_band_powers_for_topomap(n_samples)
+        powers = result.get('powers')
+        if powers is None or len(powers) == 0:
             return
 
-        # 计算当前各导联的信号幅值
-        activities = []
-        for ch_name in self._sim.selected_channels:
-            if ch_name in self._sim.eeg_buffer:
-                # 使用当前值的绝对值作为活动强度
-                activity = np.abs(self._sim.eeg_buffer[ch_name][-1])
-                activities.append(activity)
-            else:
-                activities.append(0)
-
-        # 归一化到 0-1 范围
-        if activities:
-            max_act = max(activities) if max(activities) > 0 else 1
-            activities = [a / max_act for a in activities]
-
-        # 更新热力图（通过signal_page）
-        self._sim.signal_page.update_heatmap(
-            np.array(activities), self._sim.selected_channels
-        )
+        self._sim.signal_page.update_heatmap_result(result)

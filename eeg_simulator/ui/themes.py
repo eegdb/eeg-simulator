@@ -304,6 +304,18 @@ QLineEdit:focus {{
     border-color: {c['border_focus']};
 }}
 
+QTextEdit, QPlainTextEdit {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    color: {c['text_main']};
+    padding: 5px 10px;
+    border-radius: 5px;
+}}
+
+QTextEdit:focus, QPlainTextEdit:focus {{
+    border-color: {c['border_focus']};
+}}
+
 QCheckBox {{
     color: {c['text_main']};
     spacing: 8px;

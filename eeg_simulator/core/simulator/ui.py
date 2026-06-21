@@ -78,7 +78,8 @@ class SimulatorUI:
         # 连接输出页面的采样率变化
         self._sim.output_page.sr_spin.valueChanged.connect(self._sim.buffers._on_sr_changed_from_page)
 
-        # 初始化实时信号页面的热力图布局（与电极布局页面一致）
+        # 初始化实时信号页面的热力图布局（与源配置页 montage 一致）
+        self._sim.source_page.sync_montage_to_electrode_page()
         self._sync_heatmap_montage()
 
     def _sync_heatmap_montage(self):
