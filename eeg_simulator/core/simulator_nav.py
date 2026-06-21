@@ -3,13 +3,14 @@
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Optional, Dict
 
 import numpy as np
 import mne
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLabel, QPushButton, QFileDialog,
+                             QLabel, QPushButton,
                              QMessageBox, QStatusBar, QFrame, QStackedWidget)
 from PyQt6.QtCore import QTimer, Qt
 
@@ -20,6 +21,7 @@ from ..ui.widgets import NavigationView
 from ..ui.panels import SourceConfigPage, ElectrodeChannelsPage, OutputPage, SignalPage
 from ..ui.menu import MainMenuBar
 from ..ui.dialogs import NewProjectDialog
+from ..ui.file_dialogs import get_existing_directory
 from ..utils import get_config, get_translator, tr, get_logger
 from ..utils.resources import load_app_icon
 from ..utils.project_manager import ProjectManager
@@ -82,7 +84,7 @@ class EEGSimulator(QMainWindow):
         self.sampling_rate = self.config.get('default_sampling_rate', 1000)
         self.simulation_time = 0.0
         self.is_running = False
-        self.buffer_size = 5000
+        self.buffer_size = 5000  # 由 _compute_buffer_size 在 init/resize 时更新
         self.samples_per_update = max(1, int(self.sampling_rate / 30))
         
         # 信号生成状态 - 用于保持相位连续性 {patch_id: {'phase': current_phase}}
@@ -181,6 +183,7 @@ class EEGSimulator(QMainWindow):
         
         # 连接滤波参数改变信号
         self.signal_page.filter_changed.connect(self._on_filter_changed)
+        self.signal_page.time_window_spin.valueChanged.connect(self._on_time_window_changed)
         
         # 添加页面到导航视图
         self.nav_view.add_page('source', '🧠', tr('nav_source_config'), self.source_page)
@@ -340,9 +343,38 @@ class EEGSimulator(QMainWindow):
         self.samples_per_update = max(1, int(self.sampling_rate / 30))
         self.signal_engine.sampling_rate = self.sampling_rate
         self._coupling_engine.set_sampling_rate(self.sampling_rate)
+        for coupling in self._coupling_models.values():
+            coupling.set_sampling_rate(self.sampling_rate)
         if self._mne_simulator is not None:
             self._mne_simulator.sampling_rate = self.sampling_rate
+        self._resize_signal_buffers()
         self._update_status_bar()
+
+    def _on_time_window_changed(self, _value):
+        """时间窗口改变时同步环形缓冲区大小"""
+        self._resize_signal_buffers()
+
+    def _compute_buffer_size(self) -> int:
+        """按显示时间窗口与采样率计算缓冲区长度"""
+        time_window = 10.0
+        if hasattr(self, 'signal_page'):
+            time_window = self.signal_page.time_window_spin.value()
+        return max(int(time_window * self.sampling_rate), 256)
+
+    def _resize_signal_buffers(self):
+        """重建环形缓冲区（运行中不重设，避免打断仿真）"""
+        if self.is_running:
+            return
+        new_size = self._compute_buffer_size()
+        if new_size == self.buffer_size and self.time_buffer.size == new_size:
+            return
+        self.buffer_size = new_size
+        self.time_buffer = np.zeros(self.buffer_size)
+        for ch in list(self.eeg_buffer.keys()):
+            self.eeg_buffer[ch] = np.zeros(self.buffer_size)
+        for dipole_id in list(self.signal_buffer.keys()):
+            self.signal_buffer[dipole_id] = np.zeros(self.buffer_size)
+        logger.debug(f"信号缓冲区已调整为 {self.buffer_size} 点")
 
     def _on_layout_changed(self, layout_key):
         """电极布局改变时"""
@@ -372,6 +404,8 @@ class EEGSimulator(QMainWindow):
 
     def _init_signal_buffers(self):
         """初始化信号缓冲区"""
+        self.buffer_size = self._compute_buffer_size()
+        self.time_buffer = np.zeros(self.buffer_size)
         self.signal_buffer.clear()
         for patch in self.patches.values():
             for dipole in patch.dipoles:
@@ -568,7 +602,9 @@ class EEGSimulator(QMainWindow):
             current_signals = {pid: signals[i] for pid, signals in patch_signals.items()}
             
             if mne_factors is not None:
-                current_signals = self._apply_mne_coupling_factors(current_signals, mne_factors)
+                current_signals = PatchCouplingEngine.apply_mne_factors(
+                    current_signals, mne_factors
+                )
             elif self._coupling_models:
                 current_time = self.simulation_time + i * dt
                 current_signals = self._coupling_engine.compute_coupled_signals(current_signals, current_time)
@@ -609,7 +645,7 @@ class EEGSimulator(QMainWindow):
         k = self.source_page.knn_spin.value() if hasattr(self, 'source_page') else 3
         decay_length = self.source_page.decay_spin.value() if hasattr(self, 'source_page') else 0.02
         coupling_sig = tuple(
-            (cid, c.source_patch_id, c.target_patch_id, c.strength)
+            (cid, c.source_patch_id, c.target_patch_id, c.type, c.strength, c.delay)
             for cid, c in sorted(self._coupling_models.items())
         )
         cache_key = (k, decay_length, self._patches_geometry_signature(), coupling_sig)
@@ -648,27 +684,18 @@ class EEGSimulator(QMainWindow):
                 {'dipoles': target_dipoles},
                 k=k, decay_length=decay_length,
             )
-            factors.append((source_id, target_id, mne_coupling * coupling.strength))
+            factors.append((source_id, target_id, mne_coupling * coupling.strength, coupling))
 
         self._mne_coupling_factor_cache = factors
         self._mne_coupling_factor_cache_key = cache_key
         return factors
-
-    @staticmethod
-    def _apply_mne_coupling_factors(patch_signals, factors):
-        """按耦合顺序将预计算的 MNE 因子应用到当前样本"""
-        coupled_signals = patch_signals.copy()
-        for source_id, target_id, factor in factors:
-            if source_id in coupled_signals and target_id in coupled_signals:
-                coupled_signals[target_id] += factor * coupled_signals[source_id]
-        return coupled_signals
 
     def _apply_mne_coupling(self, patch_signals):
         """应用MNE耦合（单样本，保留供外部调用）"""
         factors = self._get_mne_coupling_factors()
         if not factors:
             return patch_signals
-        return self._apply_mne_coupling_factors(patch_signals, factors)
+        return PatchCouplingEngine.apply_mne_factors(patch_signals, factors)
 
     def _project_to_electrodes_batch(self, patch_signals, n_samples):
         """批量投影到电极"""
@@ -1321,9 +1348,19 @@ class EEGSimulator(QMainWindow):
             self._update_window_title()
             QMessageBox.information(self, tr('success'), tr('msg_project_created', project_name))
 
+    def _project_dialog_start_dir(self) -> str:
+        if self.current_project_path:
+            return self.current_project_path
+        default_dir = self.config.get('default_project_dir', '')
+        if default_dir and os.path.isdir(default_dir):
+            return default_dir
+        return str(Path.home())
+
     def _on_open_project(self):
         """打开项目"""
-        project_dir = QFileDialog.getExistingDirectory(self, tr('dlg_open_project'), "")
+        project_dir = get_existing_directory(
+            self, tr('dlg_open_project'), self._project_dialog_start_dir()
+        )
         if not project_dir:
             return
         
@@ -1366,7 +1403,9 @@ class EEGSimulator(QMainWindow):
 
     def _on_save_project_as(self):
         """另存为"""
-        project_dir = QFileDialog.getExistingDirectory(self, tr('dlg_save_project'), "")
+        project_dir = get_existing_directory(
+            self, tr('dlg_save_project'), self._project_dialog_start_dir()
+        )
         if not project_dir:
             return
         

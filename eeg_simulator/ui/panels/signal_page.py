@@ -320,12 +320,12 @@ class SignalPage(NavigationPage):
             self.fft_curve.setData(freqs, power)
     
     def update_info(self, sr=None, ch_count=None, buffer_size=None):
-        """更新信息显示"""
-        if sr is not None:
+        """更新信息显示（标签存在时才更新）"""
+        if sr is not None and hasattr(self, 'sr_info_label'):
             self.sr_info_label.setText(f"🔊 {int(sr)} Hz")
-        if ch_count is not None:
+        if ch_count is not None and hasattr(self, 'ch_info_label'):
             self.ch_info_label.setText(f"📡 {ch_count} ch")
-        if buffer_size is not None:
+        if buffer_size is not None and hasattr(self, 'buffer_info_label'):
             self.buffer_info_label.setText(f"📊 {buffer_size} points")
     
     def get_filter_params(self):

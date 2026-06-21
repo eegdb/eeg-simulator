@@ -1,10 +1,12 @@
 """主菜单栏"""
 
-from PyQt6.QtWidgets import (QMenuBar, QMenu, QMessageBox, QFileDialog,
+from PyQt6.QtWidgets import (QMenuBar, QMenu, QMessageBox,
                              QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
                              QPushButton, QWidget, QCheckBox, QSpinBox, QLineEdit)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QAction
+
+from ..file_dialogs import get_existing_directory
 
 from ..styles import COLORS
 from ...utils import tr, get_config, get_logger_manager
@@ -173,7 +175,7 @@ class SettingsDialog(QDialog):
         if not current_dir:
             current_dir = ""
         
-        dir_path = QFileDialog.getExistingDirectory(
+        dir_path = get_existing_directory(
             self, tr('dlg_select_default_dir'), current_dir
         )
         if dir_path:

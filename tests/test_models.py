@@ -261,6 +261,28 @@ class TestPatchCouplingEngine(unittest.TestCase):
         result = coupling.apply_coupling(9.0, 0.0, 0.0)
         self.assertAlmostEqual(result, 0.0)
 
+    def test_apply_mne_factors_nonlinear(self):
+        """MNE 耦合路径应支持非线性类型"""
+        coupling = CouplingModel(
+            'c1', 'A', 'B', CouplingModel.TYPE_NONLINEAR, strength=1.0
+        )
+        factors = [('A', 'B', 2.0, coupling)]
+        result = PatchCouplingEngine.apply_mne_factors({'A': 10.0, 'B': 0.0}, factors)
+        expected = 2.0 * np.tanh(10.0)
+        self.assertAlmostEqual(result['B'], expected, places=5)
+
+    def test_apply_mne_factors_delayed(self):
+        """MNE 耦合路径应支持延迟类型"""
+        coupling = CouplingModel(
+            'c1', 'A', 'B', CouplingModel.TYPE_DELAYED,
+            strength=1.0, delay=0.002, sampling_rate=1000
+        )
+        factors = [('A', 'B', 1.0, coupling)]
+        PatchCouplingEngine.apply_mne_factors({'A': 1.0, 'B': 0.0}, factors)
+        PatchCouplingEngine.apply_mne_factors({'A': 2.0, 'B': 0.0}, factors)
+        result = PatchCouplingEngine.apply_mne_factors({'A': 3.0, 'B': 0.0}, factors)
+        self.assertAlmostEqual(result['B'], 1.0, places=5)
+
 
 class TestPatchSerialization(unittest.TestCase):
     """测试 Patch 序列化"""

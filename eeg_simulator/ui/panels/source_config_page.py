@@ -351,6 +351,12 @@ class SourceConfigPage(NavigationPage):
                                 logger.info(f"已加载MEG+EEG前向模型: {fwd_filename_fallback}")
                             except Exception as fwd_e2:
                                 logger.warning(f"MEG+EEG前向模型加载失败: {fwd_e2}")
+            elif src_filename == 'volume-7mm-src.fif':
+                QMessageBox.information(
+                    self,
+                    tr('info'),
+                    tr('msg_fwd_manual_required', src_filename),
+                )
             
             QMessageBox.information(self, tr('success'),
                 tr('msg_load_success', 'Sample', total_vertices))

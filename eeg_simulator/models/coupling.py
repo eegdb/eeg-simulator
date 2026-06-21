@@ -94,6 +94,14 @@ class CouplingModel:
             return target_signal + self.strength * delayed_source
             
         return target_signal
+
+    def mne_contribution(self, source_signal: float, factor: float) -> float:
+        """MNE 几何权重下的耦合增量（factor 已含 strength × 几何项）"""
+        if self.type == self.TYPE_NONLINEAR:
+            return factor * np.tanh(source_signal)
+        if self.type == self.TYPE_DELAYED:
+            return factor * self._get_delayed_signal(source_signal)
+        return factor * source_signal
     
     def _ensure_history_buffer(self):
         """初始化或调整延迟耦合的历史缓冲区"""
@@ -211,6 +219,23 @@ class PatchCouplingEngine:
                 source_signal, target_signal, current_time
             )
             
+        return coupled_signals
+
+    @staticmethod
+    def apply_mne_factors(
+        patch_signals: Dict[str, float],
+        factors,
+    ) -> Dict[str, float]:
+        """应用 MNE 预计算耦合因子，并尊重 linear / nonlinear / delayed 类型
+
+        factors: [(source_id, target_id, factor, CouplingModel), ...]
+        """
+        coupled_signals = patch_signals.copy()
+        for source_id, target_id, factor, coupling in factors:
+            if source_id not in coupled_signals or target_id not in coupled_signals:
+                continue
+            contrib = coupling.mne_contribution(coupled_signals[source_id], factor)
+            coupled_signals[target_id] += contrib
         return coupled_signals
     
     def set_sampling_rate(self, sampling_rate: float):

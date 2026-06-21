@@ -25,6 +25,7 @@ def get_primary_btn_style():
         }}
     """
 from ..widgets.navigation_view import NavigationPage
+from ..file_dialogs import get_existing_directory
 from ...utils import tr
 
 
@@ -251,9 +252,8 @@ class OutputPage(NavigationPage):
     
     def _select_output_dir(self):
         """选择输出文件夹"""
-        from PyQt6.QtWidgets import QFileDialog
-        
-        dir_path = QFileDialog.getExistingDirectory(self, tr('dlg_select_output_dir'), "")
+        start = self.output_dir or ''
+        dir_path = get_existing_directory(self, tr('dlg_select_output_dir'), start)
         if dir_path:
             self.output_dir = dir_path
             display_path = dir_path if len(dir_path) < 30 else '...' + dir_path[-27:]
