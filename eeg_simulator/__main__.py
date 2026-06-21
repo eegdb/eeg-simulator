@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt
 from .ui.styles import QSS
 from .ui.themes import generate_stylesheet, set_theme
 from .utils import get_config, get_logger_manager
+from .utils.resources import load_app_icon
 from .core import EEGSimulator
 
 
@@ -25,6 +26,9 @@ def main():
     log_manager.set_console_level(log_level)
     
     app = QApplication(sys.argv)
+    app_icon = load_app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
     
     # 禁用原生菜单栏，让菜单显示在窗口内（Windows风格）
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar, True)

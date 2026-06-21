@@ -10,7 +10,6 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QFrame, QStackedWidget, QScrollArea,
                              QSizePolicy, QGraphicsOpacityEffect, QApplication)
 from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, pyqtSignal
-from PyQt6.QtGui import QIcon, QFont, QPixmap, QPainter, QColor
 
 from ..themes import get_color
 from ...utils import tr
@@ -165,7 +164,7 @@ class NavigationView(QFrame):
         header_layout.setSpacing(8)
         
         text_main = get_color('text_main')
-        self.title_label = QLabel("EEG Simulator")
+        self.title_label = QLabel(tr('nav_sidebar_title'))
         self.title_label.setStyleSheet(f"""
             color: {text_main};
             font-size: 18px;
@@ -423,6 +422,8 @@ class NavigationView(QFrame):
         Args:
             titles: {page_id: new_title} 映射
         """
+        if hasattr(self, 'title_label'):
+            self.title_label.setText(tr('nav_sidebar_title'))
         for page_id, item in self._items:
             if page_id in titles:
                 item._text = titles[page_id]

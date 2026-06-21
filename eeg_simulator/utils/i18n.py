@@ -286,6 +286,7 @@ class Translator(QObject):
             'msg_invalid_project': '无效的项目文件夹',
             # NavigationView 导航
             'nav_source_config': '源配置',
+            'nav_sidebar_title': 'EEG Simulator',
             'nav_source_config_subtitle': '加载MNE源空间、配置Patch、BEM和噪声设置',
             'nav_electrode_channels': '电极与通道',
             'nav_electrode_channels_subtitle': '选择电极布局和EEG通道',
@@ -769,6 +770,7 @@ class Translator(QObject):
             'msg_invalid_project': 'Invalid project folder',
             # NavigationView Navigation
             'nav_source_config': 'Source Config',
+            'nav_sidebar_title': 'EEG Simulator',
             'nav_source_config_subtitle': 'Load MNE source space, configure Patches, BEM and noise settings',
             'nav_electrode_channels': 'Electrode & Channels',
             'nav_electrode_channels_subtitle': 'Select electrode layout and EEG channels',

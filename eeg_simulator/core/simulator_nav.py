@@ -21,6 +21,7 @@ from ..ui.panels import SourceConfigPage, ElectrodeChannelsPage, OutputPage, Sig
 from ..ui.menu import MainMenuBar
 from ..ui.dialogs import NewProjectDialog
 from ..utils import get_config, get_translator, tr, get_logger
+from ..utils.resources import load_app_icon
 from ..utils.project_manager import ProjectManager
 from .signal_engine import SignalEngine
 from .mne_simulator import MNESimulator
@@ -56,6 +57,9 @@ class EEGSimulator(QMainWindow):
         
         self.setWindowTitle(tr('app_name'))
         self.setMinimumSize(1400, 900)
+        app_icon = load_app_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
         logger.info(f"窗口设置完成，最小尺寸: 1400x900")
 
         # 数据存储
