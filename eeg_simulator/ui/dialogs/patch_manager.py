@@ -24,6 +24,7 @@ from PyQt6.QtGui import QFont
 
 from ...utils import tr, get_logger
 from ...utils.mri_display import prepare_axial_slice, vox_to_display_xy
+from ...utils.waveform_parser import parse_waveform_array
 from ...models import Patch
 from ...ui.themes import get_color
 
@@ -1072,14 +1073,11 @@ class PatchManagerDialog(QDialog):
     def _get_custom_waveform_data(self):
         """获取自定义波形数据"""
         try:
-            import numpy as np
             data_str = self.custom_data.toPlainText().strip()
             if data_str:
-                data = eval(data_str)
-                if isinstance(data, list):
+                data = parse_waveform_array(data_str)
+                if data is not None:
                     return {'data': data}
-                elif isinstance(data, np.ndarray):
-                    return {'data': data.tolist()}
         except Exception as e:
             logger.warning(f"Invalid custom waveform data: {e}")
         return {}
@@ -1849,11 +1847,9 @@ class PatchManagerDialog(QDialog):
             try:
                 data_str = self.custom_data.toPlainText().strip()
                 if data_str:
-                    data = eval(data_str)
-                    if isinstance(data, list):
+                    data = parse_waveform_array(data_str)
+                    if data is not None:
                         params['data'] = data
-                    elif isinstance(data, np.ndarray):
-                        params['data'] = data.tolist()
             except Exception:
                 pass
             params['amplitude'] = self.custom_amplitude.value()

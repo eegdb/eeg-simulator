@@ -267,7 +267,8 @@ class Patch:
             'label_name': self.label_name,
             'hemi': self.hemi,
             'waveform_type': self.waveform_type,
-            'waveform_params': self.waveform_params
+            'waveform_params': self.waveform_params,
+            'amplitude_scale': self.amplitude_scale,
         }
     
     @classmethod
@@ -296,6 +297,7 @@ class Patch:
                     break
         
         patch.radius = data.get('radius', 0.0)
+        patch.amplitude_scale = data.get('amplitude_scale', 1e-9)
         return patch
     
     def __repr__(self):

@@ -62,6 +62,11 @@ class CouplingModel:
         """更新采样率，重新计算延迟采样数"""
         self.sampling_rate = sampling_rate
         self._update_delay_samples()
+
+    def reset_history(self):
+        """清空延迟耦合历史缓冲（仿真重启时调用）"""
+        self._history = None
+        self._write_idx = 0
         
     def apply_coupling(self, source_signal: float, target_signal: float,
                        current_time: float) -> float:
@@ -169,6 +174,11 @@ class PatchCouplingEngine:
     def clear(self):
         """清除所有耦合模型"""
         self.coupling_models.clear()
+
+    def reset_histories(self):
+        """重置所有延迟耦合的历史缓冲"""
+        for coupling in self.coupling_models.values():
+            coupling.reset_history()
         
     def compute_coupled_signals(self, patch_signals: Dict[str, float], 
                                 current_time: float) -> Dict[str, float]:
@@ -190,10 +200,10 @@ class PatchCouplingEngine:
             target_id = coupling.target_patch_id
             
             # 确保源和目标 Patch 都存在
-            if source_id not in patch_signals or target_id not in patch_signals:
+            if source_id not in coupled_signals or target_id not in coupled_signals:
                 continue
                 
-            source_signal = patch_signals[source_id]
+            source_signal = coupled_signals[source_id]
             target_signal = coupled_signals[target_id]
             
             # 应用耦合

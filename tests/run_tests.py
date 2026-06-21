@@ -8,7 +8,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 导入测试模块
-from tests.test_models import TestDipole, TestSignalGenerator, TestCouplingModel
+from tests.test_models import (
+    TestDipole, TestSignalGenerator, TestCouplingModel,
+    TestPatchCouplingEngine, TestPatchSerialization, TestWaveformParser,
+)
 from tests.test_utils import TestTranslator, TestConfigManager
 from tests.test_signal_engine import TestSignalEngine
 
@@ -23,6 +26,9 @@ def run_all_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestDipole))
     suite.addTests(loader.loadTestsFromTestCase(TestSignalGenerator))
     suite.addTests(loader.loadTestsFromTestCase(TestCouplingModel))
+    suite.addTests(loader.loadTestsFromTestCase(TestPatchCouplingEngine))
+    suite.addTests(loader.loadTestsFromTestCase(TestPatchSerialization))
+    suite.addTests(loader.loadTestsFromTestCase(TestWaveformParser))
     suite.addTests(loader.loadTestsFromTestCase(TestTranslator))
     suite.addTests(loader.loadTestsFromTestCase(TestConfigManager))
     suite.addTests(loader.loadTestsFromTestCase(TestSignalEngine))

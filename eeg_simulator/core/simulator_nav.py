@@ -104,6 +104,9 @@ class EEGSimulator(QMainWindow):
         # 噪声状态存储 {channel_name: {noise_type: state_dict}}
         self._noise_states = {}
 
+        # 简化投影的确定性权重（不使用全局 RNG）
+        self.mne_fwd_path = None
+
         # 选中的导联列表
         self.selected_channels = []
         
@@ -327,6 +330,8 @@ class EEGSimulator(QMainWindow):
         self.samples_per_update = max(1, int(self.sampling_rate / 30))
         self.signal_engine.sampling_rate = self.sampling_rate
         self._coupling_engine.set_sampling_rate(self.sampling_rate)
+        if self._mne_simulator is not None:
+            self._mne_simulator.sampling_rate = self.sampling_rate
         self._update_status_bar()
 
     def _on_layout_changed(self, layout_key):
@@ -374,17 +379,34 @@ class EEGSimulator(QMainWindow):
         if not self.selected_channels:
             QMessageBox.warning(self, tr('warning'), tr('msg_no_channels_selected'))
             return
+
+        if not self.patches:
+            QMessageBox.warning(self, tr('warning'), tr('msg_no_patches'))
+            return
+
+        output_config = self.output_page.get_output_config()
+        output_format = output_config.get('format', 'lsl')
+        if output_format in ('lsl', 'edf', 'fif') and not getattr(self, '_output_format_warned', False):
+            logger.warning(tr('msg_output_not_implemented', output_format.upper()))
+            self._output_format_warned = True
+
+        if (self._mne_simulator is None or not self._mne_simulator.is_ready()):
+            QMessageBox.warning(self, tr('warning'), tr('msg_no_forward_model'))
         
         # 更新状态
         self.is_running = True
         self.simulation_time = 0.0
         self._run_start_time = time.time()
+        self._last_update_time = None
         
         # 重置信号生成状态，确保从初始相位开始
         self._signal_states.clear()
         
         # 重置噪声状态
         self._noise_states.clear()
+
+        # 重置耦合延迟缓冲
+        self._coupling_engine.reset_histories()
         
         # 更新UI
         self.status_run.setText("● " + tr('status_running'))
@@ -421,6 +443,9 @@ class EEGSimulator(QMainWindow):
         
         # 清除噪声状态
         self._noise_states.clear()
+
+        # 重置耦合延迟缓冲
+        self._coupling_engine.reset_histories()
         
         # 更新UI
         self.status_run.setText("○ " + tr('status_stopped'))
@@ -485,6 +510,12 @@ class EEGSimulator(QMainWindow):
             
             # 更新时间
             self.simulation_time = t_end
+
+            # 限时自动停止
+            duration_limit = self.output_page.get_output_config().get('duration', 0)
+            if duration_limit > 0 and self.simulation_time >= duration_limit:
+                logger.info(f"达到设定时长 {duration_limit}s，自动停止仿真")
+                self.stop_simulation()
             
         except Exception as e:
             logger.error(f"仿真更新失败: {e}", exc_info=True)
@@ -571,8 +602,8 @@ class EEGSimulator(QMainWindow):
                 k=k, decay_length=decay_length
             )
             
-            if target_id in coupled_signals and source_id in patch_signals:
-                coupled_signals[target_id] += mne_coupling * patch_signals[source_id] * coupling.strength
+            if target_id in coupled_signals and source_id in coupled_signals:
+                coupled_signals[target_id] += mne_coupling * coupled_signals[source_id] * coupling.strength
         
         return coupled_signals
 
@@ -654,28 +685,13 @@ class EEGSimulator(QMainWindow):
         
         signal_array = np.array(list(scaled_signals.values())) if scaled_signals else np.zeros((1, n_samples))
         
-        # 为每个通道生成投影权重
-        # 根据通道位置分配不同的权重模式
+        channel_weights = self._simplified_channel_scales()
+        
         for i, ch in enumerate(self.selected_channels or ['Cz']):
             if n_sources > 0:
-                # 根据通道名称生成不同的权重模式
-                if ch in ['Cz', 'C3', 'C4']:
-                    # 中央区域通道 - 较强信号
-                    scale = 1.0
-                elif ch in ['Fz', 'Pz', 'O1', 'O2']:
-                    # 前后区域通道 - 中等信号
-                    scale = 0.7
-                else:
-                    # 其他区域通道 - 较弱信号
-                    scale = 0.5
-                
-                # 使用随机权重但保持一定相关性
-                weights = np.random.randn(n_sources) * 0.1 + 0.5
-                weights[i % n_sources] *= 2.0  # 强调某些源
-                weights = weights / (np.sum(np.abs(weights)) + 1e-10) * scale
-                
-                # 投影信号并放大到 uV 级别 (信号已经是Am单位，需要转为uV)
-                projected = np.dot(weights, signal_array) * 1e6  # 从 Am 转为 uV
+                scale = channel_weights.get(ch, channel_weights['default'])
+                weights = self._deterministic_projection_weights(ch, i, n_sources, scale)
+                projected = np.dot(weights, signal_array) * 1e6
                 eeg_data[ch] = projected
             else:
                 eeg_data[ch] = np.zeros(n_samples)
@@ -713,56 +729,47 @@ class EEGSimulator(QMainWindow):
         
         signal_array = np.array(list(scaled_signals.values())) if scaled_signals else np.zeros((1, n_samples))
         
-        # 预定义的通道权重模式（基于10-20系统位置）
-        channel_weights = {
-            # 前额
-            'Fp1': 0.4, 'Fpz': 0.4, 'Fp2': 0.4,
-            # 额叶
-            'F7': 0.5, 'F3': 0.6, 'Fz': 0.7, 'F4': 0.6, 'F8': 0.5,
-            'F1': 0.6, 'F2': 0.6, 'F5': 0.5, 'F6': 0.5,
-            # 中央
-            'T7': 0.5, 'C3': 0.8, 'Cz': 0.9, 'C4': 0.8, 'T8': 0.5,
-            'C1': 0.8, 'C2': 0.8, 'C5': 0.7, 'C6': 0.7,
-            # 顶叶
-            'P7': 0.5, 'P3': 0.7, 'Pz': 0.8, 'P4': 0.7, 'P8': 0.5,
-            'P1': 0.7, 'P2': 0.7, 'P5': 0.6, 'P6': 0.6,
-            # 枕叶
-            'O1': 0.5, 'Oz': 0.6, 'O2': 0.5, 'PO1': 0.5, 'PO2': 0.5,
-            # 颞叶
-            'FT7': 0.5, 'FT8': 0.5, 'TP7': 0.5, 'TP8': 0.5,
-            # 中央顶叶
-            'CP1': 0.7, 'CP2': 0.7, 'CP3': 0.7, 'CP4': 0.7, 'CP5': 0.6, 'CP6': 0.6, 'CPz': 0.8,
-            # 额中央
-            'FC1': 0.6, 'FC2': 0.6, 'FC3': 0.6, 'FC4': 0.6, 'FC5': 0.5, 'FC6': 0.5, 'FCz': 0.7,
-            # 默认
-            'default': 0.5
-        }
+        channel_weights = self._simplified_channel_scales()
         
         for i, ch in enumerate(channel_names):
             if n_sources > 0:
-                # 获取该通道的权重系数
                 scale = channel_weights.get(ch, channel_weights['default'])
-                
-                # 使用通道名生成确定性随机种子，保持同一通道的信号一致性
-                seed = hash(ch) % 10000
-                np.random.seed(seed)
-                
-                # 生成权重
-                weights = np.random.randn(n_sources) * 0.1 + 0.5
-                weights[i % n_sources] *= 1.5  # 轻微强调某些源
-                weights = weights / (np.sum(np.abs(weights)) + 1e-10) * scale
-                
-                # 投影信号并放大到 uV 级别 (信号已经是Am单位，需要转为uV)
+                weights = self._deterministic_projection_weights(ch, i, n_sources, scale)
                 projected = np.dot(weights, signal_array) * 1e6
                 eeg_data[ch] = projected
-                
-                # 重置随机种子
-                np.random.seed(None)
             else:
                 eeg_data[ch] = np.zeros(n_samples)
         
         
         return eeg_data
+
+    @staticmethod
+    def _simplified_channel_scales():
+        """10-20 通道简化投影强度系数"""
+        return {
+            'Fp1': 0.4, 'Fpz': 0.4, 'Fp2': 0.4,
+            'F7': 0.5, 'F3': 0.6, 'Fz': 0.7, 'F4': 0.6, 'F8': 0.5,
+            'F1': 0.6, 'F2': 0.6, 'F5': 0.5, 'F6': 0.5,
+            'T7': 0.5, 'C3': 0.8, 'Cz': 0.9, 'C4': 0.8, 'T8': 0.5,
+            'C1': 0.8, 'C2': 0.8, 'C5': 0.7, 'C6': 0.7,
+            'P7': 0.5, 'P3': 0.7, 'Pz': 0.8, 'P4': 0.7, 'P8': 0.5,
+            'P1': 0.7, 'P2': 0.7, 'P5': 0.6, 'P6': 0.6,
+            'O1': 0.5, 'Oz': 0.6, 'O2': 0.5, 'PO1': 0.5, 'PO2': 0.5,
+            'FT7': 0.5, 'FT8': 0.5, 'TP7': 0.5, 'TP8': 0.5,
+            'CP1': 0.7, 'CP2': 0.7, 'CP3': 0.7, 'CP4': 0.7,
+            'CP5': 0.6, 'CP6': 0.6, 'CPz': 0.8,
+            'FC1': 0.6, 'FC2': 0.6, 'FC3': 0.6, 'FC4': 0.6,
+            'FC5': 0.5, 'FC6': 0.5, 'FCz': 0.7,
+            'default': 0.5,
+        }
+
+    @staticmethod
+    def _deterministic_projection_weights(ch, ch_index, n_sources, scale):
+        """按通道名生成确定性投影权重（不污染全局 RNG）"""
+        rng = np.random.RandomState(abs(hash(ch)) % (2**31))
+        weights = rng.randn(n_sources) * 0.1 + 0.5
+        weights[ch_index % n_sources] *= 1.5
+        return weights / (np.sum(np.abs(weights)) + 1e-10) * scale
 
     def _add_noise_batch(self, eeg_data, t, n_samples):
         """批量添加噪声 - 保持噪声连续性"""
@@ -1050,9 +1057,13 @@ class EEGSimulator(QMainWindow):
             if 'fwd' in file_path.lower():
                 fwd = mne.read_forward_solution(file_path)
                 self.mne_fwd = fwd
+                self.mne_fwd_path = file_path
                 self.mne_info = fwd['info']
                 
-                self._mne_simulator = MNESimulator(fwd)
+                src = self.source_page.loaded_src if hasattr(self, 'source_page') else None
+                self._mne_simulator = MNESimulator(
+                    fwd, src=src, sampling_rate=self.sampling_rate
+                )
                 self.signal_page.set_montage_from_info(self.mne_info)
                 self.electrode_channels_page._update_channel_list()
                 
@@ -1227,6 +1238,9 @@ class EEGSimulator(QMainWindow):
             src_info = {
                 "src_filename": self.source_page.src_combo.currentData() if hasattr(self.source_page, 'src_combo') else None,
                 "subject": self.source_page.subject,
+                "subjects_dir": getattr(self, 'subjects_dir', None),
+                "src_path": getattr(self.source_page, 'loaded_src_path', None),
+                "fwd_path": getattr(self, 'mne_fwd_path', None),
                 "src_labels": self.source_page.src_labels,
                 "label_source_map": self.source_page.label_source_map
             }
@@ -1235,7 +1249,7 @@ class EEGSimulator(QMainWindow):
             "patches": patches_data,
             "couplings": couplings_data,
             "noise": self.noise_configs,
-            "bem": {"conductivity": self.bem_conductivity} if self.bem_conductivity else {},
+            "bem": self._serialize_bem_config(),
             "config": {"sampling_rate": self.sampling_rate},
             "selected_channels": getattr(self, 'selected_channels', []),
             "source_space": src_info
@@ -1290,7 +1304,9 @@ class EEGSimulator(QMainWindow):
         
         # 加载其他数据
         self.noise_configs = data.get("noise", [])
-        self.bem_conductivity = data.get("bem", {}).get("conductivity")
+        self.bem_conductivity = self._normalize_bem_conductivity(
+            data.get("bem", {}).get("conductivity")
+        )
         self.sampling_rate = data.get("config", {}).get("sampling_rate", 1000)
         self.selected_channels = data.get("selected_channels", [])
         
@@ -1319,7 +1335,7 @@ class EEGSimulator(QMainWindow):
                     self.source_page.src_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
             # 尝试自动重新加载 Source Space
             if src_filename and self.source_page.subject:
-                self._reload_source_space(src_filename, self.source_page.subject)
+                self._reload_source_space(src_filename, self.source_page.subject, src_info)
         
         self._init_signal_buffers()
         self._update_ui_from_data()
@@ -1329,36 +1345,79 @@ class EEGSimulator(QMainWindow):
         QMessageBox.information(self, tr('success'), 
             tr('msg_project_loaded', ProjectManager.get_project_name(project_path)))
 
-    def _reload_source_space(self, src_filename, subject):
+    def _serialize_bem_config(self):
+        """序列化 BEM 导电率（优先取 UI 当前值）"""
+        if hasattr(self, 'source_page') and hasattr(self.source_page, 'get_bem_conductivity'):
+            conductivity = self.source_page.get_bem_conductivity()
+            if conductivity:
+                return {"conductivity": list(conductivity)}
+        if self.bem_conductivity:
+            c = self.bem_conductivity
+            return {"conductivity": list(c) if isinstance(c, (tuple, list)) else c}
+        return {}
+
+    def _normalize_bem_conductivity(self, conductivity):
+        """将 JSON 中的导电率转为 (brain, skull, scalp) 元组"""
+        if not conductivity or len(conductivity) < 3:
+            return None
+        return (float(conductivity[0]), float(conductivity[1]), float(conductivity[2]))
+
+    def _reload_source_space(self, src_filename, subject, source_space_info=None):
         """重新加载 Source Space（用于项目加载时）"""
         import mne
         import os
         
+        source_space_info = source_space_info or {}
+        
         try:
-            data_path = mne.datasets.sample.data_path()
-            subjects_dir = os.path.join(data_path, 'subjects')
-            src_path = os.path.join(subjects_dir, subject, 'bem', src_filename)
+            src_path = source_space_info.get('src_path')
+            if src_path and os.path.exists(src_path):
+                pass
+            else:
+                subjects_dir = source_space_info.get('subjects_dir') or getattr(self, 'subjects_dir', None)
+                if not subjects_dir:
+                    try:
+                        data_path = mne.datasets.sample.data_path()
+                        subjects_dir = os.path.join(data_path, 'subjects')
+                    except Exception:
+                        subjects_dir = None
+                if subjects_dir and src_filename and subject:
+                    src_path = os.path.join(subjects_dir, subject, 'bem', src_filename)
+                else:
+                    src_path = None
             
-            if os.path.exists(src_path):
+            if src_path and os.path.exists(src_path):
                 self.source_page.loaded_src = mne.read_source_spaces(src_path)
-                self.subjects_dir = subjects_dir
+                self.source_page.loaded_src_path = src_path
+                if source_space_info.get('subjects_dir'):
+                    self.subjects_dir = source_space_info['subjects_dir']
+                elif os.path.dirname(os.path.dirname(os.path.dirname(src_path))):
+                    self.subjects_dir = os.path.dirname(os.path.dirname(os.path.dirname(src_path)))
                 self.init_mne_coupling_engine(self.source_page.loaded_src, self.source_page.src_labels)
-                logger.info(f"自动重新加载 Source Space: {src_filename}")
+                logger.info(f"自动重新加载 Source Space: {src_path}")
                 
-                # 尝试加载对应的前向模型
-                fwd_mapping = {
-                    'sample-oct-6-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                    'sample-all-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                    'sample-oct-6-orig-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
-                    'sample-fsaverage-ico-5-src.fif': 'sample_audvis-eeg-ico-5-fwd.fif',
-                }
-                fwd_filename = fwd_mapping.get(src_filename)
-                if fwd_filename:
-                    fwd_path = os.path.join(data_path, 'MEG', 'sample', fwd_filename)
-                    if os.path.exists(fwd_path):
+                fwd_path = source_space_info.get('fwd_path')
+                if fwd_path and os.path.exists(fwd_path):
+                    try:
+                        self.load_mne_data(fwd_path)
+                        logger.info(f"自动加载前向模型: {fwd_path}")
+                    except Exception as e:
+                        logger.warning(f"自动加载前向模型失败: {e}")
+                elif src_filename:
+                    fwd_mapping = {
+                        'sample-oct-6-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
+                        'sample-all-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
+                        'sample-oct-6-orig-src.fif': 'sample_audvis-eeg-oct-6-fwd.fif',
+                        'sample-fsaverage-ico-5-src.fif': 'sample_audvis-eeg-ico-5-fwd.fif',
+                    }
+                    fwd_filename = fwd_mapping.get(src_filename)
+                    if fwd_filename:
                         try:
-                            self.load_mne_data(fwd_path)
-                            logger.info(f"自动加载前向模型: {fwd_filename}")
+                            data_path = mne.datasets.sample.data_path()
+                            fwd_path = os.path.join(data_path, 'MEG', 'sample', fwd_filename)
+                            if os.path.exists(fwd_path):
+                                self.load_mne_data(fwd_path)
+                                logger.info(f"自动加载前向模型: {fwd_filename}")
                         except Exception as e:
                             logger.warning(f"自动加载前向模型失败: {e}")
             else:
@@ -1389,6 +1448,8 @@ class EEGSimulator(QMainWindow):
             self.source_page._update_patch_stats()
             self.source_page._update_coupling_stats()
             self.source_page._update_noise_stats()
+            if self.bem_conductivity and hasattr(self.source_page, 'apply_bem_conductivity'):
+                self.source_page.apply_bem_conductivity(self.bem_conductivity)
         
         # 更新输出页面
         if hasattr(self, 'output_page'):
@@ -1747,3 +1808,27 @@ class EEGSimulator(QMainWindow):
             del self._coupling_models[coupling_id]
             self._coupling_engine.remove_coupling(coupling_id)
             logger.info(f"删除耦合模型: {coupling_id}")
+
+    def modify_coupling_model(self, coupling_id, strength=None, delay=None, type=None):
+        """修改已有耦合模型的参数（保持 ID 不变）"""
+        coupling = self._coupling_models.get(coupling_id)
+        if coupling is None:
+            return False
+
+        if strength is not None:
+            coupling.strength = strength
+        if delay is not None:
+            coupling.delay = delay
+            coupling.set_sampling_rate(self.sampling_rate)
+        if type is not None and type in CouplingModel.VALID_TYPES:
+            coupling.type = type
+            coupling.reset_history()
+
+        logger.info(f"修改耦合模型: {coupling_id}")
+        return True
+
+    def clear_coupling_models(self):
+        """清除所有耦合模型"""
+        self._coupling_models.clear()
+        self._coupling_engine.clear()
+        logger.info("已清除所有耦合模型")

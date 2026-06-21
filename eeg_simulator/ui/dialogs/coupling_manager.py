@@ -204,8 +204,11 @@ class CouplingManagerDialog(QDialog):
             dipole_count = patch.get_dipole_count()
             combo.addItem(f"{display_name} ({dipole_count} dipoles)", patch_id)
     
-    def refresh_coupling_list(self):
+    def refresh_coupling_list(self, select_id=None):
         """刷新耦合列表"""
+        if select_id is None and hasattr(self, 'current_edit_id'):
+            select_id = getattr(self, 'current_edit_id', None)
+
         self.coupling_list.clear()
         
         for coupling_id, coupling in self.coupling_models.items():
@@ -224,6 +227,9 @@ class CouplingManagerDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, coupling_id)
             item.setToolTip(f"ID: {coupling_id}")
             self.coupling_list.addItem(item)
+            if select_id and coupling_id == select_id:
+                item.setSelected(True)
+                self.coupling_list.setCurrentItem(item)
         
         # 更新统计
         count = len(self.coupling_models)
@@ -271,9 +277,11 @@ class CouplingManagerDialog(QDialog):
             self.edit_delay_spin.setValue(coupling.delay)
             self.edit_delay_spin.blockSignals(False)
             
+            self.edit_type_combo.blockSignals(True)
             type_index = self.edit_type_combo.findData(coupling.type)
             if type_index >= 0:
                 self.edit_type_combo.setCurrentIndex(type_index)
+            self.edit_type_combo.blockSignals(False)
             
             self.current_edit_id = coupling_id
     
@@ -356,30 +364,27 @@ class CouplingManagerDialog(QDialog):
     def _on_edit_strength_changed(self, value):
         """编辑强度改变"""
         if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            self.parent_simulator.modify_coupling_model(
-                self.current_edit_id,
-                strength=value
-            )
-            self.refresh_coupling_list()
-            self.coupling_changed.emit()
+            if self.parent_simulator.modify_coupling_model(
+                self.current_edit_id, strength=value
+            ):
+                self.refresh_coupling_list(select_id=self.current_edit_id)
+                self.coupling_changed.emit()
     
     def _on_edit_delay_changed(self, value):
         """编辑延迟改变"""
         if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            self.parent_simulator.modify_coupling_model(
-                self.current_edit_id,
-                delay=value
-            )
-            self.refresh_coupling_list()
-            self.coupling_changed.emit()
+            if self.parent_simulator.modify_coupling_model(
+                self.current_edit_id, delay=value
+            ):
+                self.refresh_coupling_list(select_id=self.current_edit_id)
+                self.coupling_changed.emit()
     
     def _on_edit_type_changed(self, index):
         """编辑类型改变"""
         if hasattr(self, 'current_edit_id') and self.current_edit_id:
             new_type = self.edit_type_combo.currentData()
-            self.parent_simulator.modify_coupling_model(
-                self.current_edit_id,
-                type=new_type
-            )
-            self.refresh_coupling_list()
-            self.coupling_changed.emit()
+            if self.parent_simulator.modify_coupling_model(
+                self.current_edit_id, type=new_type
+            ):
+                self.refresh_coupling_list(select_id=self.current_edit_id)
+                self.coupling_changed.emit()

@@ -43,6 +43,7 @@ class SourceConfigPage(NavigationPage):
         )
         
         self.loaded_src = None
+        self.loaded_src_path = None
         self.src_labels = {'lh': {}, 'rh': {}}
         self.label_source_map = {'lh': {}, 'rh': {}}
         self.subject = None
@@ -297,6 +298,7 @@ class SourceConfigPage(NavigationPage):
                 return
             
             self.loaded_src = mne.read_source_spaces(src_path)
+            self.loaded_src_path = src_path
             total_vertices = sum(s['nuse'] for s in self.loaded_src)
             logger.info(f"源空间加载成功: {src_filename}, 总顶点数: {total_vertices}")
             
@@ -425,6 +427,22 @@ class SourceConfigPage(NavigationPage):
             
         except Exception as e:
             QMessageBox.critical(self, tr('error'), tr('msg_bem_failed', str(e)))
+
+    def get_bem_conductivity(self):
+        """读取当前 UI 中的 BEM 导电率"""
+        return (
+            self.brain_cond_spin.value(),
+            self.skull_cond_spin.value(),
+            self.scalp_cond_spin.value(),
+        )
+
+    def apply_bem_conductivity(self, conductivity):
+        """将保存的导电率恢复到 UI"""
+        if not conductivity or len(conductivity) < 3:
+            return
+        self.brain_cond_spin.setValue(float(conductivity[0]))
+        self.skull_cond_spin.setValue(float(conductivity[1]))
+        self.scalp_cond_spin.setValue(float(conductivity[2]))
     
     def _on_manage_noise(self):
         """打开噪声管理界面"""

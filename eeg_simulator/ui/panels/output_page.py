@@ -220,9 +220,12 @@ class OutputPage(NavigationPage):
     
     def _on_sr_changed(self, value):
         """采样率改变"""
-        self.parent_simulator.sampling_rate = value
-        if hasattr(self.parent_simulator, '_update_status_bar'):
-            self.parent_simulator._update_status_bar()
+        if hasattr(self.parent_simulator, '_on_sr_changed_from_page'):
+            self.parent_simulator._on_sr_changed_from_page(value)
+        else:
+            self.parent_simulator.sampling_rate = value
+            if hasattr(self.parent_simulator, '_update_status_bar'):
+                self.parent_simulator._update_status_bar()
     
     def _on_sim_control_clicked(self):
         """仿真控制按钮点击"""

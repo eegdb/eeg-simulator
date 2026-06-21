@@ -8,6 +8,16 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from eeg_simulator.models import Dipole, SignalGenerator, CouplingModel
+from eeg_simulator.models.coupling import PatchCouplingEngine
+from eeg_simulator.models.patch import Patch
+
+import importlib.util
+_wp_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'eeg_simulator', 'utils', 'waveform_parser.py')
+_wp_spec = importlib.util.spec_from_file_location('waveform_parser', _wp_path)
+_wp_mod = importlib.util.module_from_spec(_wp_spec)
+_wp_spec.loader.exec_module(_wp_mod)
+parse_waveform_array = _wp_mod.parse_waveform_array
 
 
 class TestDipole(unittest.TestCase):
@@ -219,6 +229,59 @@ class TestCouplingModel(unittest.TestCase):
         repr_str = repr(coupling)
         self.assertIn("Coupling", repr_str)
         self.assertIn("coupling_1", repr_str)
+
+
+class TestPatchCouplingEngine(unittest.TestCase):
+    """测试 Patch 耦合引擎"""
+
+    def test_chained_coupling_uses_coupled_source(self):
+        """链式耦合应使用已耦合的源信号"""
+        engine = PatchCouplingEngine()
+        engine.add_coupling(CouplingModel(
+            'c1', 'A', 'B', CouplingModel.TYPE_LINEAR, strength=1.0
+        ))
+        engine.add_coupling(CouplingModel(
+            'c2', 'B', 'C', CouplingModel.TYPE_LINEAR, strength=1.0
+        ))
+
+        result = engine.compute_coupled_signals(
+            {'A': 1.0, 'B': 0.0, 'C': 0.0}, current_time=0.0
+        )
+        self.assertAlmostEqual(result['B'], 1.0)
+        self.assertAlmostEqual(result['C'], 1.0)
+
+    def test_reset_histories(self):
+        """重启仿真应清空延迟缓冲"""
+        coupling = CouplingModel(
+            'c1', 'A', 'B', CouplingModel.TYPE_DELAYED,
+            strength=1.0, delay=0.002, sampling_rate=1000
+        )
+        coupling.apply_coupling(5.0, 0.0, 0.0)
+        coupling.reset_history()
+        result = coupling.apply_coupling(9.0, 0.0, 0.0)
+        self.assertAlmostEqual(result, 0.0)
+
+
+class TestPatchSerialization(unittest.TestCase):
+    """测试 Patch 序列化"""
+
+    def test_amplitude_scale_roundtrip(self):
+        patch = Patch(id='p1', name='test')
+        patch.amplitude_scale = 2.5e-9
+        restored = Patch.from_dict(patch.to_dict())
+        self.assertAlmostEqual(restored.amplitude_scale, 2.5e-9)
+
+
+class TestWaveformParser(unittest.TestCase):
+    """测试自定义波形解析"""
+
+    def test_parse_list(self):
+        data = parse_waveform_array('[0.0, 0.5, 1.0]')
+        self.assertEqual(data, [0.0, 0.5, 1.0])
+
+    def test_reject_eval(self):
+        with self.assertRaises(ValueError):
+            parse_waveform_array('__import__("os").system("echo hi")')
 
 
 if __name__ == '__main__':
