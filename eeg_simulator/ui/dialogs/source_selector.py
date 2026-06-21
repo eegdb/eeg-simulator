@@ -21,7 +21,10 @@ import mne
 
 from ..styles import COLORS
 from ...utils import tr
+from ...utils.logger import get_logger
 from ...utils.mri_display import prepare_axial_slice, vox_to_display_xy
+
+logger = get_logger(__name__)
 
 
 class SourceSpaceSelectorDialog(QDialog):
@@ -86,7 +89,7 @@ class SourceSpaceSelectorDialog(QDialog):
                 t1_path = os.path.join(self.subjects_dir, self.subject, 'mri', 'T1.mgz')
                 
                 if os.path.exists(t1_path):
-                    print(f"Loading MRI: {t1_path}")
+                    logger.debug(f"Loading MRI: {t1_path}")
                     img = nib.load(t1_path)
                     self.t1_data = img.get_fdata()
                     
@@ -110,15 +113,15 @@ class SourceSpaceSelectorDialog(QDialog):
                     self.z_max = self.t1_data.shape[2] - 1
                     self.current_z = self.z_max // 2
                     
-                    print(f"MRI loaded: shape={self.t1_data.shape}, {len(self.vox_pts)} source points")
+                    logger.debug(f"MRI loaded: shape={self.t1_data.shape}, {len(self.vox_pts)} source points")
                 else:
-                    print(f"MRI file not found: {t1_path}")
+                    logger.warning(f"MRI file not found: {t1_path}")
                     self.init_fallback_data()
             else:
-                print(f"No subjects_dir or subject provided")
+                logger.warning("No subjects_dir or subject provided")
                 self.init_fallback_data()
         except Exception as e:
-            print(f"Error loading MRI: {e}")
+            logger.warning(f"Error loading MRI: {e}")
             import traceback
             traceback.print_exc()
             self.init_fallback_data()
@@ -148,7 +151,7 @@ class SourceSpaceSelectorDialog(QDialog):
         
         self.z_max = 255
         self.current_z = 128
-        print(f"Using fallback data: {len(self.vox_pts)} points")
+        logger.debug(f"Using fallback data: {len(self.vox_pts)} points")
 
     def collect_vertices(self):
         """收集所有顶点信息
@@ -216,7 +219,11 @@ class SourceSpaceSelectorDialog(QDialog):
                 # 更新偏移量，为下一个半球做准备
                 vox_idx_offset += n_rr
         
-        print(f"Collected {len(self.all_vertices)} vertices: LH={sum(1 for v in self.all_vertices if v['hemi']=='lh')}, RH={sum(1 for v in self.all_vertices if v['hemi']=='rh')}")
+        logger.debug(
+            f"Collected {len(self.all_vertices)} vertices: "
+            f"LH={sum(1 for v in self.all_vertices if v['hemi']=='lh')}, "
+            f"RH={sum(1 for v in self.all_vertices if v['hemi']=='rh')}"
+        )
 
     def init_ui(self):
         """初始化UI"""
@@ -573,8 +580,8 @@ class SourceSpaceSelectorDialog(QDialog):
             for hemi in ['lh', 'rh']:
                 source_map = self.label_source_map.get(hemi, {})
                 all_labels.extend(list(source_map.keys()))
-            print(f"[SourceSelector] Available labels ({len(all_labels)} total): {all_labels[:5]}...")
-            print(f"[SourceSelector] Current atlas: {current_atlas}")
+            logger.debug(f"[SourceSelector] Available labels ({len(all_labels)} total): {all_labels[:5]}...")
+            logger.debug(f"[SourceSelector] Current atlas: {current_atlas}")
 
             # 使用预计算的label_source_map构建树，只创建label项
             matched_count = 0
@@ -616,7 +623,7 @@ class SourceSpaceSelectorDialog(QDialog):
                         self.label_colors[label_name] = colors[color_idx % len(colors)][:3]
                         color_idx += 1
             
-            print(f"[SourceSelector] Matched {matched_count} labels for atlas '{current_atlas}'")
+            logger.debug(f"[SourceSelector] Matched {matched_count} labels for atlas '{current_atlas}'")
         finally:
             # 恢复信号连接
             self.lh_tree.itemChanged.connect(self.on_label_item_changed)
@@ -735,7 +742,10 @@ class SourceSpaceSelectorDialog(QDialog):
                     rh_pts.append(pt)
         
         # 调试输出
-        print(f"Z={z}: LH={len(lh_pts)} (selected={len(selected_lh)}), RH={len(rh_pts)} (selected={len(selected_rh)}), Highlight={len(highlighted_pts)}")
+        logger.debug(
+            f"Z={z}: LH={len(lh_pts)} (selected={len(selected_lh)}), "
+            f"RH={len(rh_pts)} (selected={len(selected_rh)}), Highlight={len(highlighted_pts)}"
+        )
 
         # 绘制点 (注意绘制顺序：底层先画)
         

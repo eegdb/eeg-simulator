@@ -23,6 +23,17 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from ...utils import tr, get_logger
+
+# MNE 源幅度 UI 单位：显示值 × AMPLITUDE_SCALE_UNIT = amplitude_scale (A/nAm)
+AMPLITUDE_SCALE_UNIT = 1e-9
+
+
+def _amplitude_scale_to_ui(scale: float) -> float:
+    return scale / AMPLITUDE_SCALE_UNIT
+
+
+def _amplitude_scale_from_ui(ui_value: float) -> float:
+    return ui_value * AMPLITUDE_SCALE_UNIT
 from ...utils.mri_display import prepare_axial_slice, vox_to_display_xy
 from ...utils.waveform_parser import parse_waveform_array
 from ...models import Patch
@@ -45,6 +56,8 @@ class PatchManagerDialog(QDialog):
         
         self.parent_simulator = parent_simulator
         self.patches = parent_simulator.patches
+        if hasattr(parent_simulator, 'patch_ops'):
+            parent_simulator.patch_ops._sync_entity_counters()
         
         # 获取 source_page 的数据 (NavigationView 布局)
         self.src = getattr(parent_simulator.source_page, 'loaded_src', None)
@@ -779,12 +792,15 @@ class PatchManagerDialog(QDialog):
         amp_scale_layout = QHBoxLayout()
         amp_scale_layout.addWidget(QLabel(tr('label_amplitude_scale')))
         self.amp_scale_spin = QDoubleSpinBox()
-        self.amp_scale_spin.setRange(1e-12, 1e-6)
-        self.amp_scale_spin.setDecimals(12)
-        self.amp_scale_spin.setValue(1e-9)
-        self.amp_scale_spin.setSingleStep(1e-10)
+        self.amp_scale_spin.setRange(0.001, 1000.0)
+        self.amp_scale_spin.setDecimals(3)
+        self.amp_scale_spin.setValue(1.0)
+        self.amp_scale_spin.setSingleStep(0.1)
         self.amp_scale_spin.setToolTip(tr('tooltip_amplitude_scale'))
         amp_scale_layout.addWidget(self.amp_scale_spin)
+        self.amp_scale_unit_label = QLabel(tr('suffix_amplitude_scale'))
+        amp_scale_layout.addWidget(self.amp_scale_unit_label)
+        amp_scale_layout.addStretch()
         waveform_layout.addLayout(amp_scale_layout)
         
         # ========== 波形预览 ==========
@@ -1244,7 +1260,7 @@ class PatchManagerDialog(QDialog):
                 orientation = src['nn'][vertno].tolist() if 'nn' in src else [0, 0, 1]
                 
                 # 创建偶极子（不放入任何 Patch，临时存储）
-                dipole = self.parent_simulator.create_dipole(
+                dipole = self.parent_simulator.patch_ops.create_dipole(
                     position=position,
                     orientation=orientation,
                     hemi=hemi,
@@ -1463,7 +1479,7 @@ class PatchManagerDialog(QDialog):
             center_dipole = all_dipoles.get(self.selected_dipole_id)
             if center_dipole:
                 # 在源空间中查找半径内的所有顶点
-                nearby_vertices = self.parent_simulator.find_dipoles_in_radius(
+                nearby_vertices = self.parent_simulator.patch_ops.find_dipoles_in_radius(
                     center_position=center_dipole.position.tolist(),
                     radius=radius,
                     src=self.src,
@@ -1731,13 +1747,14 @@ class PatchManagerDialog(QDialog):
         orientation = src['nn'][vertno].tolist() if 'nn' in src else [0, 0, 1]
         
         # 创建偶极子
-        dipole_id = self.parent_simulator.add_dipole(
+        dipole = self.parent_simulator.patch_ops.create_dipole(
             position=position,
             orientation=orientation,
             hemi=hemi,
             vertno=vertno,
             src_idx=src_idx
         )
+        dipole_id = dipole.id
         
         # 重新收集位置信息
         self._collect_dipole_positions()
@@ -1771,7 +1788,7 @@ class PatchManagerDialog(QDialog):
         radius = self.radius_spin.value() / 1000.0  # mm to m
         
         # 在源空间中查找半径内的所有顶点
-        nearby_vertices = self.parent_simulator.find_dipoles_in_radius(
+        nearby_vertices = self.parent_simulator.patch_ops.find_dipoles_in_radius(
             center_position=dipole.position.tolist(),
             radius=radius,
             src=self.src,
@@ -1879,7 +1896,7 @@ class PatchManagerDialog(QDialog):
         user_name = self.patch_name.text().strip()
         name = user_name if user_name else None
         
-        self.parent_simulator.modify_patch(
+        self.parent_simulator.patch_ops.modify_patch(
             self.current_patch_id,
             name=name,
             waveform_type=waveform_type,
@@ -1889,7 +1906,7 @@ class PatchManagerDialog(QDialog):
         # 更新幅度因子
         patch = self.parent_simulator.patches.get(self.current_patch_id)
         if patch:
-            patch.amplitude_scale = self.amp_scale_spin.value()
+            patch.amplitude_scale = _amplitude_scale_from_ui(self.amp_scale_spin.value())
         
         self.patch_modified.emit(self.current_patch_id, {
             'waveform_type': waveform_type,
@@ -1922,10 +1939,10 @@ class PatchManagerDialog(QDialog):
             QMessageBox.warning(self, tr('warning'), tr('msg_select_center_dipole'))
             return
         
-        # 检查该偶极子是否已在 Patch 中
+        # 检查该偶极子是否已在 Patch 中（按对象身份，避免 ID 重复时的误判）
         for patch in self.parent_simulator.patches.values():
-            if patch.get_dipole_by_id(self.selected_dipole_id):
-                QMessageBox.warning(self, tr('warning'), 
+            if center_dipole in patch.dipoles:
+                QMessageBox.warning(self, tr('warning'),
                     tr('msg_dipole_already_in_patch', self.selected_dipole_id))
                 return
         
@@ -1949,7 +1966,7 @@ class PatchManagerDialog(QDialog):
         # 计算 src_idx
         src_idx = 0 if center_dipole.hemi == 'lh' else 1
         
-        patch_id = self.parent_simulator.create_patch(
+        patch_id = self.parent_simulator.patch_ops.create_patch(
             position=center_dipole.position.tolist(),
             orientation=center_dipole.orientation.tolist(),
             radius=radius,
@@ -1964,7 +1981,7 @@ class PatchManagerDialog(QDialog):
         )
         
         # 在源空间中查找半径内的所有顶点
-        nearby_vertices = self.parent_simulator.find_dipoles_in_radius(
+        nearby_vertices = self.parent_simulator.patch_ops.find_dipoles_in_radius(
             center_position=center_dipole.position.tolist(),
             radius=radius,
             src=self.src,
@@ -1976,7 +1993,7 @@ class PatchManagerDialog(QDialog):
         actual_dipole_count = 1  # 中心偶极子
         if patch:
             # 设置幅度因子
-            patch.amplitude_scale = self.amp_scale_spin.value()
+            patch.amplitude_scale = _amplitude_scale_from_ui(self.amp_scale_spin.value())
             
             if nearby_vertices:
                 # 为中心偶极子周围的顶点创建偶极子并添加到 Patch
@@ -1986,7 +2003,7 @@ class PatchManagerDialog(QDialog):
                         continue
                     
                     # 创建偶极子
-                    dipole = self.parent_simulator.create_dipole(
+                    dipole = self.parent_simulator.patch_ops.create_dipole(
                         position=vertex_info['position'],
                         orientation=vertex_info['orientation'],
                         hemi=vertex_info['hemi'],
@@ -2033,7 +2050,7 @@ class PatchManagerDialog(QDialog):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.parent_simulator.delete_patch(self.current_patch_id)
+            self.parent_simulator.patch_ops.delete_patch(self.current_patch_id)
             self.patch_deleted.emit(self.current_patch_id)
             self.refresh_patch_list()
             # 刷新当前 Label 的偶极子列表（因为有些可能被释放）
@@ -2146,7 +2163,9 @@ class PatchManagerDialog(QDialog):
             self.custom_data.setPlainText(str(data))
         
         # 加载幅度因子
-        self.amp_scale_spin.setValue(getattr(patch, 'amplitude_scale', 1e-9))
+        self.amp_scale_spin.setValue(
+            _amplitude_scale_to_ui(getattr(patch, 'amplitude_scale', AMPLITUDE_SCALE_UNIT))
+        )
         
         # 更新显示
         self._update_nearby_dipoles()

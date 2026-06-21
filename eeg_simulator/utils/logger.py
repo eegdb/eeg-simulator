@@ -143,6 +143,8 @@ class LoggerManager:
         Returns:
             logging.Logger: 配置好的日志器
         """
+        if name.startswith('eeg_simulator.'):
+            return logging.getLogger(name)
         return logging.getLogger(f'eeg_simulator.{name}')
     
     def set_level(self, level):

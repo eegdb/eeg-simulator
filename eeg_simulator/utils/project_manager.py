@@ -52,7 +52,11 @@ class ProjectManager:
                 "noise": [],
                 "bem": {},
                 "selected_channels": [],
-                "source_space": {}
+                "electrode_montage": None,
+                "source_space": {},
+                "output": {},
+                "signal_filter": {},
+                "mne_coupling": {},
             }
             
             # 保存到单个 JSON 文件
@@ -128,9 +132,21 @@ class ProjectManager:
             
             if "selected_channels" in project_data:
                 existing_data["selected_channels"] = project_data["selected_channels"]
+
+            if "electrode_montage" in project_data:
+                existing_data["electrode_montage"] = project_data["electrode_montage"]
             
             if "source_space" in project_data:
                 existing_data["source_space"] = cls._convert_to_json_serializable(project_data["source_space"])
+
+            if "output" in project_data:
+                existing_data["output"] = project_data["output"]
+
+            if "signal_filter" in project_data:
+                existing_data["signal_filter"] = project_data["signal_filter"]
+
+            if "mne_coupling" in project_data:
+                existing_data["mne_coupling"] = project_data["mne_coupling"]
             
             # 保存到单个 JSON 文件
             with open(meta_path, 'w', encoding='utf-8') as f:
@@ -172,7 +188,11 @@ class ProjectManager:
                 "noise": [],
                 "bem": {},
                 "selected_channels": [],
-                "source_space": {}
+                "electrode_montage": None,
+                "source_space": {},
+                "output": {},
+                "signal_filter": {},
+                "mne_coupling": {},
             }
             
             for key, default_value in default_data.items():
@@ -252,17 +272,27 @@ class ProjectManager:
             })
         return serialized
     
-    @staticmethod
-    def _serialize_couplings(couplings):
-        """序列化耦合数据"""
-        serialized = []
+    @classmethod
+    def _serialize_couplings(cls, couplings):
+        """序列化耦合数据（CouplingModel 或 to_dict() 字典）"""
+        if not isinstance(couplings, dict):
+            return cls._convert_to_json_serializable(couplings)
+
+        serialized = {}
         for coupling_id, c in couplings.items():
-            serialized.append({
-                "id": coupling_id,
-                "source_id": c.source_patch_id,
-                "target_id": c.target_patch_id,
-                "type": c.type,
-                "strength": ProjectManager._convert_to_json_serializable(c.strength),
-                "delay": ProjectManager._convert_to_json_serializable(c.delay)
-            })
+            if isinstance(c, dict):
+                cid = c.get("id", coupling_id)
+                serialized[cid] = cls._convert_to_json_serializable(c)
+            else:
+                serialized[coupling_id] = {
+                    "id": c.id,
+                    "source_patch_id": c.source_patch_id,
+                    "target_patch_id": c.target_patch_id,
+                    "type": c.type,
+                    "strength": cls._convert_to_json_serializable(c.strength),
+                    "delay": cls._convert_to_json_serializable(c.delay),
+                    "sampling_rate": cls._convert_to_json_serializable(
+                        getattr(c, "sampling_rate", 1000)
+                    ),
+                }
         return serialized

@@ -1,5 +1,6 @@
 """实时信号页面 - NavigationView 布局"""
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QDoubleSpinBox, QCheckBox, QPushButton,
@@ -11,6 +12,18 @@ from ..widgets.navigation_view import NavigationPage
 from ..widgets.head_layout import HeatmapOverlayWidget
 from ...utils import tr
 
+
+def _add_equal_width_cells(parent_layout, cell_widgets_list):
+    """将每组控件放入等宽单元格并加入横向布局。"""
+    for widgets in cell_widgets_list:
+        cell = QWidget()
+        cell_layout = QHBoxLayout(cell)
+        cell_layout.setContentsMargins(0, 0, 0, 0)
+        cell_layout.setSpacing(6)
+        for widget in widgets:
+            cell_layout.addWidget(widget)
+        cell_layout.addStretch()
+        parent_layout.addWidget(cell, 1)
 
 def configure_plot_for_zoom(plot):
     """配置 PlotItem 支持滚轮缩放，禁用拖动"""
@@ -87,56 +100,103 @@ class SignalPage(NavigationPage):
     def _setup_content(self):
         """设置页面内容"""
         layout = self.get_content_layout()
-        
-        # ========== 滤波参数设置 ==========
+
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(12)
+        panel_expanding = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        # ========== 滤波参数（仅高通 / 低通 / 陷波）==========
         self.filter_group = QGroupBox(tr('filter_settings'))
         filter_layout = QHBoxLayout(self.filter_group)
         
-        # 高通滤波
         self.highpass_label = QLabel(tr('label_highpass'))
-        filter_layout.addWidget(self.highpass_label)
         self.highpass_spin = QDoubleSpinBox()
         self.highpass_spin.setRange(0, 100)
         self.highpass_spin.setValue(0.5)
-        self.highpass_spin.setSuffix(' Hz')
         self.highpass_spin.setDecimals(1)
-        filter_layout.addWidget(self.highpass_spin)
+        self.highpass_spin.setFixedWidth(52)
+        self.highpass_spin.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
         
-        # 低通滤波
         self.lowpass_label = QLabel(tr('label_lowpass'))
-        filter_layout.addWidget(self.lowpass_label)
         self.lowpass_spin = QDoubleSpinBox()
         self.lowpass_spin.setRange(0, 500)
         self.lowpass_spin.setValue(100)
-        self.lowpass_spin.setSuffix(' Hz')
         self.lowpass_spin.setDecimals(1)
-        filter_layout.addWidget(self.lowpass_spin)
+        self.lowpass_spin.setFixedWidth(52)
+        self.lowpass_spin.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
         
-        # 工频滤波
         self.notch_cb = QCheckBox(tr('label_notch_filter'))
         self.notch_cb.setChecked(True)
-        filter_layout.addWidget(self.notch_cb)
         self.notch_freq_combo = QComboBox()
-        self.notch_freq_combo.addItem('50 Hz', 50.0)
-        self.notch_freq_combo.addItem('60 Hz', 60.0)
+        self.notch_freq_combo.setObjectName('notch_freq_combo')
+        self.notch_freq_combo.addItem('50', 50.0)
+        self.notch_freq_combo.setItemData(0, '50 Hz', Qt.ItemDataRole.ToolTipRole)
+        self.notch_freq_combo.addItem('60', 60.0)
+        self.notch_freq_combo.setItemData(1, '60 Hz', Qt.ItemDataRole.ToolTipRole)
+        self.notch_freq_combo.setToolTip(tr('label_notch_filter'))
         self.notch_freq_combo.setEnabled(True)
-        filter_layout.addWidget(self.notch_freq_combo)
-        
-        filter_layout.addStretch()
-        
-        # 时间窗口
+        self.notch_freq_combo.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        self.notch_freq_combo.setFixedWidth(40)
+        self.notch_freq_combo.setStyleSheet("""
+            QComboBox#notch_freq_combo {
+                min-width: 40px;
+                max-width: 40px;
+                padding: 2px 2px 2px 4px;
+            }
+            QComboBox#notch_freq_combo::drop-down {
+                width: 12px;
+            }
+        """)
+        _add_equal_width_cells(filter_layout, [
+            [self.highpass_label, self.highpass_spin],
+            [self.lowpass_label, self.lowpass_spin],
+            [self.notch_cb, self.notch_freq_combo],
+        ])
+        self.filter_group.setSizePolicy(panel_expanding)
+        controls_row.addWidget(self.filter_group, 1)
+
+        # ========== 波形显示 ==========
+        self.waveform_group = QGroupBox(tr('group_waveform_view'))
+        waveform_layout = QHBoxLayout(self.waveform_group)
+        self.waveform_autoscale_cb = QCheckBox(tr('label_waveform_autoscale'))
+        self.waveform_autoscale_cb.setToolTip(tr('tooltip_waveform_autoscale'))
+        self.waveform_autoscale_cb.setChecked(True)
         self.time_window_label = QLabel(tr('label_time_window'))
-        filter_layout.addWidget(self.time_window_label)
         self.time_window_spin = QDoubleSpinBox()
         self.time_window_spin.setRange(1, 60)
         self.time_window_spin.setValue(10)
         self.time_window_spin.setSuffix(' s')
         self.time_window_spin.setDecimals(0)
-        filter_layout.addWidget(self.time_window_spin)
+        _add_equal_width_cells(waveform_layout, [
+            [self.waveform_autoscale_cb],
+            [self.time_window_label, self.time_window_spin],
+        ])
+        self.waveform_group.setSizePolicy(panel_expanding)
+        controls_row.addWidget(self.waveform_group, 1)
+
+        # ========== 分析侧栏（热力图 / FFT 开关）==========
+        self.side_view_group = QGroupBox(tr('group_side_analysis'))
+        side_view_layout = QHBoxLayout(self.side_view_group)
+        self.show_heatmap_cb = QCheckBox(tr('label_show_heatmap'))
+        self.show_heatmap_cb.setChecked(False)
+        self.show_fft_cb = QCheckBox(tr('label_show_fft'))
+        self.show_fft_cb.setChecked(False)
+        _add_equal_width_cells(side_view_layout, [
+            [self.show_heatmap_cb],
+            [self.show_fft_cb],
+        ])
+        self.side_view_group.setSizePolicy(panel_expanding)
+        controls_row.addWidget(self.side_view_group, 1)
+
+        layout.addLayout(controls_row)
         
-        layout.addWidget(self.filter_group)
-        
-        # 连接滤波参数改变信号
+        # 连接信号
         self.highpass_spin.valueChanged.connect(self.filter_changed.emit)
         self.lowpass_spin.valueChanged.connect(self.filter_changed.emit)
         self.notch_cb.stateChanged.connect(self.filter_changed.emit)
@@ -144,6 +204,8 @@ class SignalPage(NavigationPage):
         self.notch_cb.stateChanged.connect(
             lambda _: self.notch_freq_combo.setEnabled(self.notch_cb.isChecked())
         )
+        self.show_heatmap_cb.stateChanged.connect(self._update_side_panels_visibility)
+        self.show_fft_cb.stateChanged.connect(self._update_side_panels_visibility)
         
         # ========== 波形显示区域 + 热力图 ==========
         self.viz_group = QGroupBox(tr('panel_realtime_signal'))
@@ -160,10 +222,10 @@ class SignalPage(NavigationPage):
         self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         viz_splitter.addWidget(self.plot_widget)
         
-        # 右侧：地形图 + FFT（固定宽度，不随窗口缩放）
-        right_panel = QWidget()
-        right_panel.setFixedWidth(280)  # 固定宽度
-        right_layout = QVBoxLayout(right_panel)
+        # 右侧：地形图 + FFT（固定宽度，可单独开关）
+        self.right_panel = QWidget()
+        self.right_panel.setFixedWidth(280)
+        right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
         
@@ -207,16 +269,24 @@ class SignalPage(NavigationPage):
         fft_layout.addWidget(self.fft_plot)
         
         right_layout.addWidget(self.fft_group, 1)
-        viz_splitter.addWidget(right_panel)
+        self.viz_splitter = viz_splitter
+        viz_splitter.addWidget(self.right_panel)
         # 设置分割器拉伸因子：左侧可伸缩，右侧固定
-        viz_splitter.setStretchFactor(0, 1)  # 左侧（信号图）可伸缩
-        viz_splitter.setStretchFactor(1, 0)  # 右侧（热力图+FFT）固定
-        
+        viz_splitter.setStretchFactor(0, 1)
+        viz_splitter.setStretchFactor(1, 0)
+
         viz_layout.addWidget(viz_splitter)
         layout.addWidget(self.viz_group, 1)
+        self._update_side_panels_visibility()
     
     def update_plots(self, channels):
         """根据通道列表更新图表"""
+        saved_y_ranges = {}
+        if not self.is_waveform_autoscale():
+            for ch_name, plot in self.plot_items.items():
+                y_min, y_max = plot.viewRange()[1]
+                saved_y_ranges[ch_name] = (y_min, y_max)
+
         self.plot_widget.clear()
         self.plot_items.clear()
         self.plot_curves.clear()
@@ -258,8 +328,9 @@ class SignalPage(NavigationPage):
             else:
                 plot.setLabel('bottom', tr('time_seconds'), color=get_color('text_muted'), size='10px')
             
-            # 设置Y轴范围（适合 μV 级别信号）
-            plot.setYRange(-5, 5, padding=0.1)
+            if not self.is_waveform_autoscale() and ch_name in saved_y_ranges:
+                y_min, y_max = saved_y_ranges[ch_name]
+                plot.setYRange(y_min, y_max, padding=0)
             
             # 创建曲线
             pen = pg.mkPen(color=get_color('accent'), width=1.5)
@@ -280,6 +351,61 @@ class SignalPage(NavigationPage):
         
         # 更新FFT导联选择列表
         self._update_fft_channel_list(channels)
+
+    def is_heatmap_enabled(self) -> bool:
+        return self.show_heatmap_cb.isChecked()
+
+    def is_fft_enabled(self) -> bool:
+        return self.show_fft_cb.isChecked()
+
+    def is_waveform_autoscale(self) -> bool:
+        return self.waveform_autoscale_cb.isChecked()
+
+    def _set_y_range_from_data(self, plot, data):
+        y_min = float(np.min(data))
+        y_max = float(np.max(data))
+        if y_min == y_max:
+            margin = max(abs(y_min) * 0.1, 1e-6) if y_min != 0 else 1.0
+            y_min -= margin
+            y_max += margin
+        else:
+            pad = (y_max - y_min) * 0.08
+            y_min -= pad
+            y_max += pad
+        plot.setYRange(y_min, y_max, padding=0)
+
+    def update_waveform_plots(self, t_display, channel_data: dict):
+        """更新各通道波形；开启自动占满时按数据动态缩放 Y 轴"""
+        for ch_name, data in channel_data.items():
+            curve = self.plot_curves.get(ch_name)
+            if curve is None:
+                continue
+            curve.setData(t_display, data)
+            plot = self.plot_items.get(ch_name)
+            if plot is None or len(data) == 0:
+                continue
+            if len(t_display) > 1:
+                plot.setXRange(float(t_display[0]), float(t_display[-1]), padding=0)
+            elif len(t_display) == 1:
+                plot.setXRange(float(t_display[0]) - 0.5, float(t_display[0]) + 0.5, padding=0)
+            if not self.is_waveform_autoscale():
+                continue
+            self._set_y_range_from_data(plot, data)
+
+    def _update_side_panels_visibility(self):
+        """根据开关显示/隐藏热力图与 FFT 面板"""
+        show_heatmap = self.is_heatmap_enabled()
+        show_fft = self.is_fft_enabled()
+        show_side = show_heatmap or show_fft
+
+        self.right_panel.setVisible(show_side)
+        self.heatmap_group.setVisible(show_heatmap)
+        self.fft_group.setVisible(show_fft)
+
+        if show_heatmap and hasattr(self.parent_simulator, 'ui'):
+            self.parent_simulator.ui._sync_heatmap_montage()
+        if not show_fft and hasattr(self, 'fft_curve'):
+            self.fft_curve.setData([], [])
     
     def update_curve_data(self, channel_name, x_data, y_data):
         """更新单个通道的数据"""
@@ -310,22 +436,19 @@ class SignalPage(NavigationPage):
             self.fft_channel_combo.setCurrentIndex(0)
     
     def update_fft(self, freqs, power):
-        """更新FFT频谱显示
-        
-        Args:
-            freqs: 频率数组 (Hz)
-            power: 功率谱密度数组
-        """
+        """更新FFT频谱显示"""
+        if not self.is_fft_enabled():
+            return
         if hasattr(self, 'fft_curve') and self.fft_curve is not None:
             self.fft_curve.setData(freqs, power)
     
     def update_info(self, sr=None, ch_count=None, buffer_size=None):
-        """更新信息显示"""
-        if sr is not None:
+        """更新信息显示（标签存在时才更新）"""
+        if sr is not None and hasattr(self, 'sr_info_label'):
             self.sr_info_label.setText(f"🔊 {int(sr)} Hz")
-        if ch_count is not None:
+        if ch_count is not None and hasattr(self, 'ch_info_label'):
             self.ch_info_label.setText(f"📡 {ch_count} ch")
-        if buffer_size is not None:
+        if buffer_size is not None and hasattr(self, 'buffer_info_label'):
             self.buffer_info_label.setText(f"📊 {buffer_size} points")
     
     def get_filter_params(self):
@@ -336,13 +459,44 @@ class SignalPage(NavigationPage):
             'notch': self.notch_cb.isChecked(),
             'notch_freq': float(self.notch_freq_combo.currentData()),
             'time_window': self.time_window_spin.value(),
+            'show_heatmap': self.is_heatmap_enabled(),
+            'show_fft': self.is_fft_enabled(),
+            'waveform_autoscale': self.is_waveform_autoscale(),
         }
 
+    def apply_filter_params(self, params: dict):
+        """从项目数据恢复滤波参数"""
+        if not params:
+            return
+        if 'highpass' in params:
+            self.highpass_spin.setValue(float(params['highpass']))
+        if 'lowpass' in params:
+            self.lowpass_spin.setValue(float(params['lowpass']))
+        if 'notch' in params:
+            self.notch_cb.setChecked(bool(params['notch']))
+        if 'notch_freq' in params:
+            freq = float(params['notch_freq'])
+            idx = self.notch_freq_combo.findData(freq)
+            if idx >= 0:
+                self.notch_freq_combo.setCurrentIndex(idx)
+        if 'time_window' in params:
+            self.time_window_spin.setValue(float(params['time_window']))
+        if 'show_heatmap' in params:
+            self.show_heatmap_cb.setChecked(bool(params['show_heatmap']))
+        if 'show_fft' in params:
+            self.show_fft_cb.setChecked(bool(params['show_fft']))
+        if 'waveform_autoscale' in params:
+            self.waveform_autoscale_cb.setChecked(bool(params['waveform_autoscale']))
+        self.notch_freq_combo.setEnabled(self.notch_cb.isChecked())
+        self._update_side_panels_visibility()
 
-    def update_heatmap(self, channel_activities):
+
+    def update_heatmap(self, channel_activities, channel_names=None):
         """更新热力图"""
+        if not self.is_heatmap_enabled():
+            return
         if hasattr(self, 'heatmap_widget'):
-            self.heatmap_widget.update_heatmap(channel_activities)
+            self.heatmap_widget.update_heatmap(channel_activities, channel_names)
     
     def clear_heatmap(self):
         """清除热力图"""
@@ -401,6 +555,8 @@ class SignalPage(NavigationPage):
         
         # 更新组标题
         self.filter_group.setTitle(tr('filter_settings'))
+        self.waveform_group.setTitle(tr('group_waveform_view'))
+        self.side_view_group.setTitle(tr('group_side_analysis'))
         self.viz_group.setTitle(tr('panel_realtime_signal'))
         self.heatmap_group.setTitle(tr('panel_head_layout'))
         self.fft_group.setTitle(tr('label_fft_spectrum'))
@@ -410,6 +566,10 @@ class SignalPage(NavigationPage):
         self.lowpass_label.setText(tr('label_lowpass'))
         self.notch_cb.setText(tr('label_notch_filter'))
         self.time_window_label.setText(tr('label_time_window'))
+        self.show_heatmap_cb.setText(tr('label_show_heatmap'))
+        self.show_fft_cb.setText(tr('label_show_fft'))
+        self.waveform_autoscale_cb.setText(tr('label_waveform_autoscale'))
+        self.waveform_autoscale_cb.setToolTip(tr('tooltip_waveform_autoscale'))
         
         # 更新 FFT 标签
         self.fft_channel_label.setText(tr('label_fft_channel'))

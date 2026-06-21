@@ -1,5 +1,7 @@
 """输出设置页面 - NavigationView 布局"""
 
+import os
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QComboBox, QDoubleSpinBox, QLineEdit,
                              QPushButton, QFrame)
@@ -25,6 +27,7 @@ def get_primary_btn_style():
         }}
     """
 from ..widgets.navigation_view import NavigationPage
+from ..file_dialogs import get_existing_directory
 from ...utils import tr
 
 
@@ -40,6 +43,8 @@ class OutputPage(NavigationPage):
         )
         
         self.output_dir = None
+        self._filename = ''
+        self._device_name = 'EEGSimulator'
         self._setup_content()
     
     def _setup_content(self):
@@ -144,6 +149,8 @@ class OutputPage(NavigationPage):
     
     def _init_output_config_ui(self):
         """初始化输出配置UI"""
+        self._sync_filename_from_ui()
+        self._sync_device_name_from_ui()
         self._clear_output_config()
         
         output_format = self.output_combo.currentData()
@@ -170,11 +177,23 @@ class OutputPage(NavigationPage):
             name_layout.addWidget(self.filename_label)
             self.filename_input = QLineEdit()
             self.filename_input.setPlaceholderText(tr('placeholder_filename'))
+            self.filename_input.setText(self._filename)
+            self.filename_input.textChanged.connect(
+                lambda text: setattr(self, '_filename', text)
+            )
             name_layout.addWidget(self.filename_input)
             file_layout.addLayout(name_layout)
             
             self.output_config_layout.addLayout(file_layout)
-            self.output_dir = None
+            if self.output_dir:
+                display_path = (
+                    self.output_dir if len(self.output_dir) < 30
+                    else '...' + self.output_dir[-27:]
+                )
+                self.output_dir_label.setText(display_path)
+                self.output_dir_label.setStyleSheet(
+                    f"color: {get_color('text_main')}; font-size: 12px;"
+                )
             
         elif output_format == 'lsl':
             # LSL输出配置
@@ -184,13 +203,23 @@ class OutputPage(NavigationPage):
             
             self.device_name_input = QLineEdit()
             self.device_name_input.setPlaceholderText(tr('placeholder_device_name'))
-            self.device_name_input.setText('EEGSimulator')
+            self.device_name_input.setText(self._device_name)
+            self.device_name_input.textChanged.connect(
+                lambda text: setattr(self, '_device_name', text or 'EEGSimulator')
+            )
             lsl_layout.addWidget(self.device_name_input)
             
             self.output_config_layout.addLayout(lsl_layout)
     
     def _clear_output_config(self):
         """清空输出配置区域"""
+        for attr in (
+            'filename_input', 'filename_label', 'output_dir_label',
+            'select_dir_btn', 'device_name_input', 'device_name_label',
+        ):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
         while self.output_config_layout.count():
             item = self.output_config_layout.takeAt(0)
             if item.widget():
@@ -200,18 +229,33 @@ class OutputPage(NavigationPage):
                     child = item.layout().takeAt(0)
                     if child.widget():
                         child.widget().deleteLater()
+
+    def _sync_filename_from_ui(self):
+        widget = getattr(self, 'filename_input', None)
+        if widget is not None:
+            try:
+                self._filename = widget.text()
+            except RuntimeError:
+                pass
+
+    def _sync_device_name_from_ui(self):
+        widget = getattr(self, 'device_name_input', None)
+        if widget is not None:
+            try:
+                self._device_name = widget.text() or 'EEGSimulator'
+            except RuntimeError:
+                pass
     
     def _on_output_format_changed(self, index):
         """输出格式改变"""
         self._init_output_config_ui()
         if hasattr(self.parent_simulator, '_update_status_bar'):
-            self.parent_simulator._update_status_bar()
+            self.parent_simulator.ui._update_status_bar()
     
     def _select_output_dir(self):
         """选择输出文件夹"""
-        from PyQt6.QtWidgets import QFileDialog
-        
-        dir_path = QFileDialog.getExistingDirectory(self, tr('dlg_select_output_dir'), "")
+        start = self.output_dir or ''
+        dir_path = get_existing_directory(self, tr('dlg_select_output_dir'), start)
         if dir_path:
             self.output_dir = dir_path
             display_path = dir_path if len(dir_path) < 30 else '...' + dir_path[-27:]
@@ -221,32 +265,24 @@ class OutputPage(NavigationPage):
     def _on_sr_changed(self, value):
         """采样率改变"""
         if hasattr(self.parent_simulator, '_on_sr_changed_from_page'):
-            self.parent_simulator._on_sr_changed_from_page(value)
+            self.parent_simulator.buffers._on_sr_changed_from_page(value)
         else:
             self.parent_simulator.sampling_rate = value
             if hasattr(self.parent_simulator, '_update_status_bar'):
-                self.parent_simulator._update_status_bar()
+                self.parent_simulator.ui._update_status_bar()
     
     def _on_sim_control_clicked(self):
         """仿真控制按钮点击"""
         if self.parent_simulator.is_running:
-            self.parent_simulator.stop_simulation()
-            self.sim_control_btn.setText(tr('btn_start_sim'))
-            self.sim_control_btn.setStyleSheet(get_primary_btn_style())
-            self.status_label.setText(tr('status_stopped'))
-            self.status_frame.setStyleSheet(f"""
-                background-color: {get_color('bg_input')};
-                border-radius: 8px;
-                border: 1px solid {get_color('border')};
-            """)
+            self.parent_simulator.simulation.stop_simulation()
         else:
-            self.parent_simulator.start_simulation()
-            
-            # 如果仿真启动成功，自动跳转到实时信号界面
-            if self.parent_simulator.is_running:
-                if hasattr(self.parent_simulator, 'nav_view'):
-                    self.parent_simulator.nav_view.set_current_page('signal')
-            
+            self.parent_simulator.simulation.start_simulation()
+            if self.parent_simulator.is_running and hasattr(self.parent_simulator, 'nav_view'):
+                self.parent_simulator.nav_view.set_current_page('signal')
+    
+    def update_simulation_status(self, is_running, elapsed_time_str="00:00:00"):
+        """更新仿真状态"""
+        if is_running:
             self.sim_control_btn.setText(tr('btn_stop_sim'))
             self.sim_control_btn.setStyleSheet(f"""
                 QPushButton {{
@@ -262,21 +298,6 @@ class OutputPage(NavigationPage):
                     background-color: {get_color('red')}30;
                 }}
             """)
-            self.status_label.setText(tr('status_running'))
-            self.status_frame.setStyleSheet(f"""
-                background-color: {get_color('accent')}33;
-                border-radius: 8px;
-                border: 1px solid {get_color('accent')};
-            """)
-        # 刷新按钮样式
-        self.sim_control_btn.style().unpolish(self.sim_control_btn)
-        self.sim_control_btn.style().polish(self.sim_control_btn)
-    
-    def update_simulation_status(self, is_running, elapsed_time_str="00:00:00"):
-        """更新仿真状态"""
-        if is_running:
-            self.sim_control_btn.setText(tr('btn_stop_sim'))
-            self.sim_control_btn.setObjectName("StopBtn")
             self.status_label.setText(tr('status_running'))
             self.status_frame.setStyleSheet(f"""
                 background-color: rgba(16, 185, 129, 0.2);
@@ -301,14 +322,61 @@ class OutputPage(NavigationPage):
     
     def get_output_config(self):
         """获取输出配置"""
+        self._sync_filename_from_ui()
+        self._sync_device_name_from_ui()
+        fmt = self.output_combo.currentData()
         return {
-            'format': self.output_combo.currentData(),
+            'format': fmt,
             'sampling_rate': self.sr_spin.value(),
             'duration': self.duration_spin.value(),
             'output_dir': self.output_dir,
-            'filename': getattr(self, 'filename_input', None) and self.filename_input.text() or '',
-            'device_name': getattr(self, 'device_name_input', None) and self.device_name_input.text() or 'EEGSimulator',
+            'filename': self._filename if fmt in ('edf', 'fif') else '',
+            'device_name': self._device_name if fmt == 'lsl' else 'EEGSimulator',
         }
+
+    def apply_output_config(self, config: dict):
+        """从项目数据恢复输出配置"""
+        if not config:
+            return
+
+        fmt = config.get('format', 'lsl')
+        idx = self.output_combo.findData(fmt)
+        if idx >= 0:
+            self.output_combo.blockSignals(True)
+            self.output_combo.setCurrentIndex(idx)
+            self.output_combo.blockSignals(False)
+            self._init_output_config_ui()
+
+        self._filename = config.get('filename', '') or ''
+        self._device_name = config.get('device_name', '') or 'EEGSimulator'
+        output_dir = config.get('output_dir')
+        self.output_dir = output_dir if output_dir and os.path.isdir(output_dir) else None
+
+        self.duration_spin.setValue(float(config.get('duration', 0)))
+        if 'sampling_rate' in config:
+            self.sr_spin.blockSignals(True)
+            self.sr_spin.setValue(float(config['sampling_rate']))
+            self.sr_spin.blockSignals(False)
+
+        if hasattr(self, 'filename_input'):
+            self.filename_input.setText(self._filename)
+        if hasattr(self, 'device_name_input'):
+            self.device_name_input.setText(self._device_name)
+        if hasattr(self, 'output_dir_label'):
+            if self.output_dir:
+                display = (
+                    self.output_dir if len(self.output_dir) < 30
+                    else '...' + self.output_dir[-27:]
+                )
+                self.output_dir_label.setText(display)
+                self.output_dir_label.setStyleSheet(
+                    f"color: {get_color('text_main')}; font-size: 12px;"
+                )
+            else:
+                self.output_dir_label.setText(tr('output_dir_not_set'))
+                self.output_dir_label.setStyleSheet(
+                    f"color: {get_color('text_muted')}; font-size: 12px;"
+                )
 
 
     def update_theme(self):

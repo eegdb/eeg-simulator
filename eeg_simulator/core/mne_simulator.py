@@ -37,6 +37,9 @@ class MNESimulator:
         
         # 构建源点到顶点索引的映射
         self._build_source_mapping()
+        self._logged_dipole_match = None
+        self._loaded_src_verts = None
+        self._log_source_space_alignment()
         
     def is_ready(self) -> bool:
         """检查仿真器是否准备就绪
@@ -79,6 +82,97 @@ class MNESimulator:
                 
         logger.info(f"源点映射构建完成: LH={len(self.vert_to_source_idx['lh'])}, "
                    f"RH={len(self.vert_to_source_idx['rh'])}")
+
+    def _get_loaded_src_verts(self):
+        """UI 加载的源空间顶点集合，用于诊断与前向模型不一致"""
+        if self._loaded_src_verts is not None:
+            return self._loaded_src_verts
+        verts = set()
+        if self.src is None:
+            self._loaded_src_verts = verts
+            return verts
+        for src_idx, s in enumerate(self.src):
+            if s.get('type') != 'surf':
+                continue
+            hemi = 'lh' if src_idx == 0 else 'rh'
+            for vertno in s.get('vertno', ()):
+                verts.add((hemi, int(vertno)))
+        self._loaded_src_verts = verts
+        return verts
+
+    def _get_forward_src_verts(self):
+        """前向模型源空间顶点集合"""
+        verts = set()
+        for hemi_idx, s in enumerate(self.src_space):
+            hemi = 'lh' if hemi_idx == 0 else 'rh'
+            for vertno in s.get('vertno', ()):
+                verts.add((hemi, int(vertno)))
+        return verts
+
+    def _log_source_space_alignment(self):
+        """启动时对比 loaded_src 与前向模型源空间是否一致"""
+        loaded = self._get_loaded_src_verts()
+        if not loaded:
+            return
+        forward = self._get_forward_src_verts()
+        only_loaded = loaded - forward
+        only_forward = forward - loaded
+        if only_loaded or only_forward:
+            logger.warning(
+                "源空间与前向模型顶点不完全一致: "
+                f"loaded_src={len(loaded)}, forward_src={len(forward)}, "
+                f"仅在 loaded_src 中={len(only_loaded)}, "
+                f"仅在前向模型中={len(only_forward)}"
+            )
+        else:
+            logger.info(
+                f"源空间与前向模型顶点一致: {len(forward)} 个有效顶点"
+            )
+
+    def _describe_unmatched_dipole(self, hemi, vertno):
+        """推断未匹配原因"""
+        if hemi is None or vertno is None:
+            missing = []
+            if hemi is None:
+                missing.append('hemi')
+            if vertno is None:
+                missing.append('vertno')
+            return f"缺少 {', '.join(missing)}"
+
+        loaded = self._get_loaded_src_verts()
+        in_loaded = (hemi, int(vertno)) in loaded if loaded else None
+        if in_loaded is True:
+            return (
+                f"{hemi}-v{vertno} 在 UI 加载的源空间中存在，"
+                "但不在前向模型源空间中（请检查源空间与前向模型是否配套）"
+            )
+        if in_loaded is False:
+            return (
+                f"{hemi}-v{vertno} 在 UI 源空间与前向模型源空间中均不存在"
+            )
+        return f"{hemi}-v{vertno} 不在前向模型源空间中"
+
+    def _log_unmatched_dipoles(self, matched_dipoles, total_dipoles, unmatched):
+        """未匹配偶极子详情，仅在计数变化时记录一次"""
+        match_key = (matched_dipoles, total_dipoles, tuple(
+            (u['patch_id'], u['dipole_id'], u.get('hemi'), u.get('vertno'))
+            for u in unmatched
+        ))
+        if match_key == self._logged_dipole_match:
+            return
+        self._logged_dipole_match = match_key
+
+        logger.warning(
+            f"SourceEstimate: {matched_dipoles}/{total_dipoles} 个偶极子匹配到源空间顶点"
+        )
+        for entry in unmatched:
+            reason = self._describe_unmatched_dipole(entry.get('hemi'), entry.get('vertno'))
+            logger.warning(
+                "  未匹配: patch=%s, dipole=%s — %s",
+                entry['patch_id'],
+                entry['dipole_id'],
+                reason,
+            )
     
     def generate_source_estimate(self, patch_data: Dict, start_time: float, 
                                   n_samples: int) -> Optional[mne.SourceEstimate]:
@@ -116,40 +210,42 @@ class MNESimulator:
         # 填充源数据
         total_dipoles = 0
         matched_dipoles = 0
+        unmatched_dipoles = []
         for patch_id, data in patch_data.items():
             signals = data.get('signals', np.zeros(n_samples))
             dipoles = data.get('dipoles', [])
-            
+
             for dipole in dipoles:
                 total_dipoles += 1
+                dipole_id = getattr(dipole, 'id', '?')
                 hemi = getattr(dipole, 'hemi', None)
                 vertno = getattr(dipole, 'vertno', None)
-                
+
                 if hemi is None or vertno is None:
+                    unmatched_dipoles.append({
+                        'patch_id': patch_id,
+                        'dipole_id': dipole_id,
+                        'hemi': hemi,
+                        'vertno': vertno,
+                    })
                     continue
-                
-                # 获取 source_data 索引
+
                 data_idx = vert_to_idx.get((hemi, vertno))
                 if data_idx is not None:
                     matched_dipoles += 1
-                    # 将信号分配到源点
                     amplitude = getattr(dipole, 'amplitude', 1.0)
-                    # MNE SourceEstimate 需要电流单位 (Am)
-                    # signals 是 Patch 波形的数值 (范围约 ±10)
-                    # 从 patch_data 获取幅度因子（每个 Patch 独立设置）
                     patch_amp_scale = data.get('amplitude_scale', 1e-9)
-                    
-                    # 调试：检查信号范围
-                    if data_idx == 0:  # 只打印第一个源点的信息
-                        logger.debug(f"Patch signal range: [{np.min(signals):.2e}, {np.max(signals):.2e}], "
-                                   f"amp_scale={patch_amp_scale}, dipole_amp={amplitude}")
-                    
                     source_data[data_idx, :] += signals * amplitude * patch_amp_scale
-        
-        # 调试信息
-        non_zero = np.count_nonzero(source_data)
-        logger.debug(f"SourceEstimate: 总dipoles={total_dipoles}, 匹配={matched_dipoles}, "
-                    f"非零源点={non_zero}, 信号范围=[{np.min(source_data):.2e}, {np.max(source_data):.2e}]")
+                else:
+                    unmatched_dipoles.append({
+                        'patch_id': patch_id,
+                        'dipole_id': dipole_id,
+                        'hemi': hemi,
+                        'vertno': vertno,
+                    })
+
+        if total_dipoles > 0 and unmatched_dipoles:
+            self._log_unmatched_dipoles(matched_dipoles, total_dipoles, unmatched_dipoles)
         
         # 创建时间数组
         tstep = 1.0 / self.sampling_rate
@@ -178,11 +274,10 @@ class MNESimulator:
             (ch_names, sensor_data) 元组，其中 sensor_data 形状为 (n_channels, n_times)
         """
         try:
-            # 使用 MNE 的 apply_forward 进行投影
             from mne import apply_forward
-            
-            # 创建 Evoked 对象
-            evoked = apply_forward(self.fwd, stc, self.info)
+
+            with mne.utils.use_log_level('error'):
+                evoked = apply_forward(self.fwd, stc, self.info, verbose=False)
             
             # 获取传感器数据和通道名称
             sensor_data = evoked.data  # (n_channels, n_times)

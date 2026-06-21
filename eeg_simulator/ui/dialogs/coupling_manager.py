@@ -1,62 +1,124 @@
 """耦合模型管理对话框 - 管理 Patch 之间的耦合关系"""
 
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, 
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox,
                              QDoubleSpinBox, QGroupBox, QFrame,
                              QListWidget, QListWidgetItem, QMessageBox,
-                             QSplitter, QWidget, QFormLayout, QScrollArea,
-                             QDialogButtonBox)
+                             QWidget, QFormLayout, QScrollArea, QSizePolicy)
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 
 from ...utils import tr, get_logger
 from ...models import CouplingModel
+from ..themes import get_color
 
 logger = get_logger(__name__)
 
 
+def _save_btn_style():
+    """保存按钮"""
+    return f"""
+        QPushButton {{
+            background-color: {get_color('accent')};
+            color: {get_color('text_inverse')};
+            border: none;
+            border-radius: 4px;
+            padding: 8px 24px;
+            font-size: 13px;
+            font-weight: bold;
+            min-height: 34px;
+        }}
+        QPushButton:hover {{
+            background-color: {get_color('accent_hover')};
+        }}
+        QPushButton:disabled {{
+            background-color: {get_color('bg_input')};
+            color: {get_color('text_muted')};
+        }}
+    """
+
+
+def _danger_btn_style():
+    return f"""
+        QPushButton {{
+            background-color: {get_color('red')};
+            color: {get_color('text_inverse')};
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-weight: bold;
+            min-height: 36px;
+        }}
+        QPushButton:hover {{
+            background-color: {get_color('red')};
+        }}
+        QPushButton:disabled {{
+            background-color: {get_color('bg_input')};
+            color: {get_color('text_muted')};
+        }}
+    """
+
+
+def _secondary_btn_style():
+    return f"""
+        QPushButton {{
+            background-color: {get_color('bg_input')};
+            color: {get_color('text_main')};
+            border: 1px solid {get_color('border')};
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-weight: bold;
+            min-height: 36px;
+        }}
+        QPushButton:hover {{
+            background-color: {get_color('border')};
+        }}
+    """
+
+
 class CouplingManagerDialog(QDialog):
     """耦合模型管理对话框"""
-    
-    coupling_changed = pyqtSignal()  # 耦合模型发生变化时发出信号
-    
+
+    coupling_changed = pyqtSignal()
+
     def __init__(self, parent_simulator, parent=None):
         super().__init__(parent)
         self.setWindowTitle(tr('dlg_coupling_manager_title'))
-        self.setMinimumSize(800, 600)
-        
+        self.setMinimumSize(820, 680)
+        self.resize(860, 760)
+
         self.parent_simulator = parent_simulator
         self.patches = parent_simulator.patches
-        self.coupling_models = parent_simulator.coupling_models
-        
+        self.coupling_models = parent_simulator.patch_ops.coupling_models
+        self.current_edit_id = None
+
         self.init_ui()
         self.refresh_coupling_list()
-    
+
     def init_ui(self):
         """初始化UI"""
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(15)
-        
-        # 左侧面板 - 耦合列表
+
         left_panel = self._create_list_panel()
         main_layout.addWidget(left_panel, 1)
-        
-        # 右侧面板 - 创建/编辑
-        right_panel = self._create_edit_panel()
-        main_layout.addWidget(right_panel, 1)
-    
+
+        right_panel = self._create_form_panel()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(right_panel)
+        main_layout.addWidget(scroll, 1)
+
     def _create_list_panel(self):
         """创建左侧耦合列表面板"""
         panel = QGroupBox(tr('panel_coupling_list'))
         layout = QVBoxLayout(panel)
-        
-        # 统计信息
+
         self.stats_label = QLabel(tr('coupling_stats', 0))
         self.stats_label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 14px;")
         layout.addWidget(self.stats_label)
-        
-        # 耦合列表
+
         self.coupling_list = QListWidget()
         self.coupling_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.coupling_list.itemSelectionChanged.connect(self._on_coupling_selected)
@@ -81,119 +143,227 @@ class CouplingManagerDialog(QDialog):
             }
         """)
         layout.addWidget(self.coupling_list)
-        
-        # 删除按钮
+
         btn_layout = QHBoxLayout()
         self.delete_btn = QPushButton(tr('delete'))
-        self.delete_btn.setObjectName("StopBtn")
+        self.delete_btn.setStyleSheet(_danger_btn_style())
         self.delete_btn.setEnabled(False)
         self.delete_btn.clicked.connect(self._on_delete_coupling)
         btn_layout.addWidget(self.delete_btn)
-        
+
         self.clear_all_btn = QPushButton(tr('btn_clear_all'))
+        self.clear_all_btn.setStyleSheet(_secondary_btn_style())
         self.clear_all_btn.clicked.connect(self._on_clear_all)
         btn_layout.addWidget(self.clear_all_btn)
-        
+
         layout.addLayout(btn_layout)
-        
         return panel
-    
-    def _create_edit_panel(self):
-        """创建右侧编辑面板"""
-        panel = QGroupBox(tr('panel_create_edit_coupling'))
+
+    def _create_form_panel(self):
+        """创建右侧统一表单（新建 / 编辑共用）"""
+        panel = QWidget()
         layout = QVBoxLayout(panel)
-        
-        # 创建新耦合区域
-        create_group = QGroupBox(tr('group_create_coupling'))
-        create_layout = QFormLayout(create_group)
-        
-        # 源 Patch 选择
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.form_group = QGroupBox(tr('panel_create_edit_coupling'))
+        form_outer = QVBoxLayout(self.form_group)
+
+        self.mode_label = QLabel()
+        self.mode_label.setStyleSheet(
+            f"color: {get_color('text_muted')}; font-size: 13px; padding-bottom: 6px;"
+        )
+        form_outer.addWidget(self.mode_label)
+
+        form_layout = QFormLayout()
         self.source_combo = QComboBox()
-        self._populate_patch_combo(self.source_combo)
-        create_layout.addRow(tr('label_source_patch'), self.source_combo)
-        
-        # 目标 Patch 选择
         self.target_combo = QComboBox()
-        self._populate_patch_combo(self.target_combo)
-        create_layout.addRow(tr('label_target_patch'), self.target_combo)
-        
-        # 耦合类型
         self.type_combo = QComboBox()
-        self.type_combo.addItem(tr('coupling_linear'), 'linear')
-        self.type_combo.addItem(tr('coupling_nonlinear'), 'nonlinear')
-        self.type_combo.addItem(tr('coupling_delayed'), 'delayed')
-        create_layout.addRow(tr('label_type'), self.type_combo)
-        
-        # 耦合强度
         self.strength_spin = QDoubleSpinBox()
-        self.strength_spin.setRange(-100, 100)
-        self.strength_spin.setDecimals(3)
-        self.strength_spin.setSingleStep(0.1)
-        self.strength_spin.setValue(0.5)
-        create_layout.addRow(tr('label_strength'), self.strength_spin)
-        
-        # 延迟
         self.delay_spin = QDoubleSpinBox()
-        self.delay_spin.setRange(0, 1)
-        self.delay_spin.setDecimals(4)
-        self.delay_spin.setSingleStep(0.001)
-        self.delay_spin.setSuffix(' s')
-        self.delay_spin.setValue(0.0)
-        create_layout.addRow(tr('label_delay'), self.delay_spin)
-        
-        # 添加按钮
-        self.add_btn = QPushButton(tr('btn_add_coupling'))
-        self.add_btn.setObjectName("PrimaryBtn")
-        self.add_btn.clicked.connect(self._on_add_coupling)
-        create_layout.addRow(self.add_btn)
-        
-        layout.addWidget(create_group)
-        
-        # 编辑区域（选中现有耦合时使用）
-        self.edit_group = QGroupBox(tr('group_edit_coupling'))
-        self.edit_group.setEnabled(False)
-        edit_layout = QFormLayout(self.edit_group)
-        
-        # 显示当前选中的耦合信息
-        self.edit_info_label = QLabel(tr('label_no_selection'))
-        self.edit_info_label.setStyleSheet("color: gray;")
-        edit_layout.addRow(self.edit_info_label)
-        
-        # 编辑强度
-        self.edit_strength_spin = QDoubleSpinBox()
-        self.edit_strength_spin.setRange(-100, 100)
-        self.edit_strength_spin.setDecimals(3)
-        self.edit_strength_spin.setSingleStep(0.1)
-        self.edit_strength_spin.valueChanged.connect(self._on_edit_strength_changed)
-        edit_layout.addRow(tr('label_strength'), self.edit_strength_spin)
-        
-        # 编辑延迟
-        self.edit_delay_spin = QDoubleSpinBox()
-        self.edit_delay_spin.setRange(0, 1)
-        self.edit_delay_spin.setDecimals(4)
-        self.edit_delay_spin.setSingleStep(0.001)
-        self.edit_delay_spin.setSuffix(' s')
-        self.edit_delay_spin.valueChanged.connect(self._on_edit_delay_changed)
-        edit_layout.addRow(tr('label_delay'), self.edit_delay_spin)
-        
-        # 编辑类型
-        self.edit_type_combo = QComboBox()
-        self.edit_type_combo.addItem(tr('coupling_linear'), 'linear')
-        self.edit_type_combo.addItem(tr('coupling_nonlinear'), 'nonlinear')
-        self.edit_type_combo.addItem(tr('coupling_delayed'), 'delayed')
-        self.edit_type_combo.currentIndexChanged.connect(self._on_edit_type_changed)
-        edit_layout.addRow(tr('label_type'), self.edit_type_combo)
-        
-        layout.addWidget(self.edit_group)
+        self.type_hint = QLabel()
+        self.type_hint.setWordWrap(True)
+
+        self.form_refs = self._add_coupling_form_rows(
+            form_layout,
+            self.source_combo,
+            self.target_combo,
+            self.type_combo,
+            self.strength_spin,
+            self.delay_spin,
+            self.type_hint,
+        )
+        self._wire_type_dependent_fields(self.form_refs)
+        form_outer.addLayout(form_layout)
+
+        btn_row = QHBoxLayout()
+        self.new_btn = QPushButton(tr('btn_new_coupling'))
+        self.new_btn.setStyleSheet(_secondary_btn_style())
+        self.new_btn.clicked.connect(self._on_new_coupling)
+        btn_row.addWidget(self.new_btn)
+        btn_row.addStretch()
+        self.save_btn = QPushButton(tr('btn_save'))
+        self.save_btn.setStyleSheet(_save_btn_style())
+        self.save_btn.setMinimumHeight(36)
+        self.save_btn.setAutoDefault(False)
+        self.save_btn.clicked.connect(self._on_save_coupling)
+        btn_row.addWidget(self.save_btn)
+        form_outer.addLayout(btn_row)
+
+        layout.addWidget(self.form_group)
         layout.addStretch()
-        
-        # 关闭按钮
-        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
-        
+
+        self._reset_form_to_create()
         return panel
-    
+
+    def _configure_type_combo(self, combo: QComboBox):
+        combo.clear()
+        combo.addItem(tr('coupling_linear'), 'linear')
+        combo.addItem(tr('coupling_nonlinear'), 'nonlinear')
+        combo.addItem(tr('coupling_delayed'), 'delayed')
+
+    def _configure_strength_spin(self, spin: QDoubleSpinBox):
+        spin.setRange(-100, 100)
+        spin.setDecimals(3)
+        spin.setSingleStep(0.1)
+
+    def _configure_delay_spin(self, spin: QDoubleSpinBox):
+        spin.setRange(0, 1)
+        spin.setDecimals(4)
+        spin.setSingleStep(0.001)
+        spin.setSuffix(' s')
+
+    def _add_coupling_form_rows(
+        self,
+        form: QFormLayout,
+        source_combo: QComboBox,
+        target_combo: QComboBox,
+        type_combo: QComboBox,
+        strength_spin: QDoubleSpinBox,
+        delay_spin: QDoubleSpinBox,
+        type_hint: QLabel,
+    ):
+        """表单字段"""
+        self._configure_type_combo(type_combo)
+        self._configure_strength_spin(strength_spin)
+        self._configure_delay_spin(delay_spin)
+        type_hint.setStyleSheet(
+            f"color: {get_color('accent')}; font-size: 12px; padding: 0 0 8px 0;"
+        )
+        type_hint.setWordWrap(True)
+        type_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        type_hint.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        form.addRow(tr('label_source_patch'), source_combo)
+        form.addRow(tr('label_target_patch'), target_combo)
+        form.addRow(tr('label_type'), type_combo)
+        form.addRow(type_hint)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        params_group = QGroupBox(tr('coupling_params_linear'))
+        params_layout = QFormLayout(params_group)
+        params_layout.addRow(tr('label_strength_linear'), strength_spin)
+        params_layout.addRow(tr('label_delay'), delay_spin)
+        form.addRow(params_group)
+
+        return {
+            'type_combo': type_combo,
+            'type_hint': type_hint,
+            'params_group': params_group,
+            'strength_label': params_layout.labelForField(strength_spin),
+            'delay_label': params_layout.labelForField(delay_spin),
+            'strength_spin': strength_spin,
+            'delay_spin': delay_spin,
+        }
+
+    def _wire_type_dependent_fields(self, form_refs: dict):
+        type_combo = form_refs['type_combo']
+        type_combo.currentIndexChanged.connect(
+            lambda _index: self._update_type_dependent_fields(form_refs)
+        )
+        self._update_type_dependent_fields(form_refs)
+
+    def _update_type_dependent_fields(self, form_refs: dict):
+        type_combo = form_refs['type_combo']
+        type_hint = form_refs['type_hint']
+        params_group = form_refs['params_group']
+        strength_label = form_refs['strength_label']
+        delay_label = form_refs['delay_label']
+        delay_spin = form_refs['delay_spin']
+
+        coupling_type = type_combo.currentData() or CouplingModel.TYPE_LINEAR
+        hints = {
+            CouplingModel.TYPE_LINEAR: tr('coupling_type_hint_linear'),
+            CouplingModel.TYPE_NONLINEAR: tr('coupling_type_hint_nonlinear'),
+            CouplingModel.TYPE_DELAYED: tr('coupling_type_hint_delayed'),
+        }
+        param_titles = {
+            CouplingModel.TYPE_LINEAR: tr('coupling_params_linear'),
+            CouplingModel.TYPE_NONLINEAR: tr('coupling_params_nonlinear'),
+            CouplingModel.TYPE_DELAYED: tr('coupling_params_delayed'),
+        }
+        strength_labels = {
+            CouplingModel.TYPE_LINEAR: tr('label_strength_linear'),
+            CouplingModel.TYPE_NONLINEAR: tr('label_strength_nonlinear'),
+            CouplingModel.TYPE_DELAYED: tr('label_strength_delayed'),
+        }
+
+        type_hint.setText(hints.get(coupling_type, ''))
+        type_hint.adjustSize()
+        params_group.setTitle(param_titles.get(coupling_type, tr('coupling_params_linear')))
+        strength_label.setText(strength_labels.get(coupling_type, tr('label_strength')))
+
+        is_delayed = coupling_type == CouplingModel.TYPE_DELAYED
+        delay_label.setVisible(is_delayed)
+        delay_spin.setVisible(is_delayed)
+        delay_spin.setEnabled(is_delayed)
+        delay_spin.setToolTip('' if is_delayed else tr('coupling_delay_na'))
+
+    def _set_combo_by_patch_id(self, combo: QComboBox, patch_id: str):
+        index = combo.findData(patch_id)
+        combo.setCurrentIndex(index if index >= 0 else -1)
+
+    def _update_mode_label(self):
+        if self.current_edit_id:
+            self.mode_label.setText(tr('coupling_mode_edit', self.current_edit_id))
+        else:
+            self.mode_label.setText(tr('coupling_mode_create'))
+
+    def _reset_form_to_create(self):
+        """重置为新建模式"""
+        self.current_edit_id = None
+        self._populate_patch_combo(self.source_combo)
+        self._populate_patch_combo(self.target_combo)
+        self.source_combo.setEnabled(True)
+        self.target_combo.setEnabled(True)
+        self.source_combo.setCurrentIndex(0 if self.source_combo.count() else -1)
+        self.target_combo.setCurrentIndex(
+            1 if self.target_combo.count() > 1 else (0 if self.target_combo.count() else -1)
+        )
+        self.type_combo.setCurrentIndex(0)
+        self.strength_spin.setValue(0.5)
+        self.delay_spin.setValue(0.0)
+        self._update_type_dependent_fields(self.form_refs)
+        self._update_mode_label()
+
+    def _load_coupling_into_form(self, coupling_id: str, coupling: CouplingModel):
+        """加载选中耦合到表单（编辑模式）"""
+        self.current_edit_id = coupling_id
+        self._populate_patch_combo(self.source_combo)
+        self._populate_patch_combo(self.target_combo)
+        self._set_combo_by_patch_id(self.source_combo, coupling.source_patch_id)
+        self._set_combo_by_patch_id(self.target_combo, coupling.target_patch_id)
+        self.source_combo.setEnabled(False)
+        self.target_combo.setEnabled(False)
+
+        self.strength_spin.setValue(coupling.strength)
+        self.delay_spin.setValue(coupling.delay)
+
+        type_index = self.type_combo.findData(coupling.type)
+        if type_index >= 0:
+            self.type_combo.setCurrentIndex(type_index)
+        self._update_type_dependent_fields(self.form_refs)
+        self._update_mode_label()
+
     def _populate_patch_combo(self, combo: QComboBox, exclude_patch_id: str = None):
         """填充 Patch 下拉框"""
         combo.clear()
@@ -203,26 +373,28 @@ class CouplingManagerDialog(QDialog):
             display_name = patch.name or patch_id
             dipole_count = patch.get_dipole_count()
             combo.addItem(f"{display_name} ({dipole_count} dipoles)", patch_id)
-    
+
     def refresh_coupling_list(self, select_id=None):
         """刷新耦合列表"""
-        if select_id is None and hasattr(self, 'current_edit_id'):
-            select_id = getattr(self, 'current_edit_id', None)
+        if select_id is None:
+            select_id = self.current_edit_id
 
+        self.coupling_list.blockSignals(True)
         self.coupling_list.clear()
-        
+
         for coupling_id, coupling in self.coupling_models.items():
-            # 获取 Patch 名称
             source_patch = self.patches.get(coupling.source_patch_id)
             target_patch = self.patches.get(coupling.target_patch_id)
-            
+
             source_name = source_patch.name if source_patch else coupling.source_patch_id
             target_name = target_patch.name if target_patch else coupling.target_patch_id
-            
-            # 创建显示文本
+
             type_text = tr(f'coupling_{coupling.type}')
-            display_text = f"{source_name} → {target_name}\n  {type_text}, strength={coupling.strength:.3f}, delay={coupling.delay:.4f}s"
-            
+            display_text = (
+                f"{source_name} → {target_name}\n"
+                f"  {type_text}, strength={coupling.strength:.3f}, delay={coupling.delay:.4f}s"
+            )
+
             item = QListWidgetItem(display_text)
             item.setData(Qt.ItemDataRole.UserRole, coupling_id)
             item.setToolTip(f"ID: {coupling_id}")
@@ -230,161 +402,125 @@ class CouplingManagerDialog(QDialog):
             if select_id and coupling_id == select_id:
                 item.setSelected(True)
                 self.coupling_list.setCurrentItem(item)
-        
-        # 更新统计
+
+        self.coupling_list.blockSignals(False)
+
         count = len(self.coupling_models)
         self.stats_label.setText(tr('coupling_stats', count))
-        
-        # 如果没有耦合，禁用编辑区域
-        if count == 0:
-            self.edit_group.setEnabled(False)
-            self.edit_info_label.setText(tr('label_no_coupling_selected'))
-    
+
+        if select_id and select_id in self.coupling_models:
+            self._load_coupling_into_form(select_id, self.coupling_models[select_id])
+            self.delete_btn.setEnabled(True)
+        elif count == 0:
+            self.coupling_list.clearSelection()
+            self._reset_form_to_create()
+            self.delete_btn.setEnabled(False)
+
+    def _on_new_coupling(self):
+        """切换到新建模式"""
+        self.coupling_list.blockSignals(True)
+        self.coupling_list.clearSelection()
+        self.coupling_list.blockSignals(False)
+        self.delete_btn.setEnabled(False)
+        self._reset_form_to_create()
+
     def _on_coupling_selected(self):
-        """选中耦合模型时"""
+        """选中列表项时加载到表单"""
         items = self.coupling_list.selectedItems()
         if not items:
             self.delete_btn.setEnabled(False)
-            self.edit_group.setEnabled(False)
-            self.edit_info_label.setText(tr('label_no_coupling_selected'))
+            self._reset_form_to_create()
             return
-        
-        item = items[0]
-        coupling_id = item.data(Qt.ItemDataRole.UserRole)
+
+        coupling_id = items[0].data(Qt.ItemDataRole.UserRole)
         coupling = self.coupling_models.get(coupling_id)
-        
         if coupling:
             self.delete_btn.setEnabled(True)
-            self.edit_group.setEnabled(True)
-            
-            # 更新编辑区域
-            source_patch = self.patches.get(coupling.source_patch_id)
-            target_patch = self.patches.get(coupling.target_patch_id)
-            source_name = source_patch.name if source_patch else coupling.source_patch_id
-            target_name = target_patch.name if target_patch else coupling.target_patch_id
-            
-            self.edit_info_label.setText(
-                f"{coupling_id}\n{source_name} → {target_name}"
-            )
-            self.edit_info_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
-            
-            # 设置当前值
-            self.edit_strength_spin.blockSignals(True)
-            self.edit_strength_spin.setValue(coupling.strength)
-            self.edit_strength_spin.blockSignals(False)
-            
-            self.edit_delay_spin.blockSignals(True)
-            self.edit_delay_spin.setValue(coupling.delay)
-            self.edit_delay_spin.blockSignals(False)
-            
-            self.edit_type_combo.blockSignals(True)
-            type_index = self.edit_type_combo.findData(coupling.type)
-            if type_index >= 0:
-                self.edit_type_combo.setCurrentIndex(type_index)
-            self.edit_type_combo.blockSignals(False)
-            
-            self.current_edit_id = coupling_id
-    
-    def _on_add_coupling(self):
-        """添加新的耦合模型"""
+            self._load_coupling_into_form(coupling_id, coupling)
+
+    def _on_save_coupling(self):
+        """保存：新建或更新"""
+        if self.current_edit_id:
+            self._save_existing_coupling()
+        else:
+            self._save_new_coupling()
+
+    def _save_new_coupling(self):
         source_id = self.source_combo.currentData()
         target_id = self.target_combo.currentData()
-        
+
         if not source_id or not target_id:
             QMessageBox.warning(self, tr('warning'), tr('msg_select_source_target'))
             return
-        
+
         if source_id == target_id:
             QMessageBox.warning(self, tr('warning'), tr('msg_same_source_target'))
             return
-        
-        # 检查是否已存在相同的耦合
+
         for coupling in self.coupling_models.values():
-            if (coupling.source_patch_id == source_id and 
-                coupling.target_patch_id == target_id):
+            if coupling.source_patch_id == source_id and coupling.target_patch_id == target_id:
                 QMessageBox.warning(self, tr('warning'), tr('msg_coupling_exists'))
                 return
-        
-        coupling_type = self.type_combo.currentData()
-        strength = self.strength_spin.value()
-        delay = self.delay_spin.value()
-        
-        new_id = self.parent_simulator.add_coupling_model(
+
+        new_id = self.parent_simulator.patch_ops.add_coupling_model(
             source_patch_id=source_id,
             target_patch_id=target_id,
-            type=coupling_type,
-            strength=strength,
-            delay=delay
+            type=self.type_combo.currentData(),
+            strength=self.strength_spin.value(),
+            delay=self.delay_spin.value(),
         )
-        
+
         if new_id:
             logger.info(f"Created coupling: {new_id}")
-            self.refresh_coupling_list()
+            self.refresh_coupling_list(select_id=new_id)
             self.coupling_changed.emit()
             QMessageBox.information(self, tr('success'), tr('msg_coupling_created', new_id))
-    
+
+    def _save_existing_coupling(self):
+        coupling_id = self.current_edit_id
+        if self.parent_simulator.patch_ops.modify_coupling_model(
+            coupling_id,
+            strength=self.strength_spin.value(),
+            delay=self.delay_spin.value(),
+            type=self.type_combo.currentData(),
+        ):
+            logger.info(f"Updated coupling: {coupling_id}")
+            self.refresh_coupling_list(select_id=coupling_id)
+            self.coupling_changed.emit()
+            QMessageBox.information(self, tr('success'), tr('msg_coupling_updated', coupling_id))
+
     def _on_delete_coupling(self):
-        """删除选中的耦合模型"""
         items = self.coupling_list.selectedItems()
         if not items:
             return
-        
-        item = items[0]
-        coupling_id = item.data(Qt.ItemDataRole.UserRole)
-        
+
+        coupling_id = items[0].data(Qt.ItemDataRole.UserRole)
         reply = QMessageBox.question(
             self, tr('confirm'),
             tr('msg_confirm_delete_coupling', coupling_id),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        
+
         if reply == QMessageBox.StandardButton.Yes:
-            self.parent_simulator.delete_coupling_model(coupling_id)
+            self.parent_simulator.patch_ops.delete_coupling_model(coupling_id)
+            self._on_new_coupling()
             self.refresh_coupling_list()
             self.coupling_changed.emit()
             logger.info(f"Deleted coupling: {coupling_id}")
-    
+
     def _on_clear_all(self):
-        """清除所有耦合模型"""
         if not self.coupling_models:
             return
-        
+
         reply = QMessageBox.question(
             self, tr('confirm'),
             tr('msg_confirm_clear_couplings', len(self.coupling_models)),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        
+
         if reply == QMessageBox.StandardButton.Yes:
-            self.parent_simulator.clear_coupling_models()
+            self.parent_simulator.patch_ops.clear_coupling_models()
+            self._on_new_coupling()
             self.refresh_coupling_list()
             self.coupling_changed.emit()
             logger.info("Cleared all couplings")
-    
-    def _on_edit_strength_changed(self, value):
-        """编辑强度改变"""
-        if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            if self.parent_simulator.modify_coupling_model(
-                self.current_edit_id, strength=value
-            ):
-                self.refresh_coupling_list(select_id=self.current_edit_id)
-                self.coupling_changed.emit()
-    
-    def _on_edit_delay_changed(self, value):
-        """编辑延迟改变"""
-        if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            if self.parent_simulator.modify_coupling_model(
-                self.current_edit_id, delay=value
-            ):
-                self.refresh_coupling_list(select_id=self.current_edit_id)
-                self.coupling_changed.emit()
-    
-    def _on_edit_type_changed(self, index):
-        """编辑类型改变"""
-        if hasattr(self, 'current_edit_id') and self.current_edit_id:
-            new_type = self.edit_type_combo.currentData()
-            if self.parent_simulator.modify_coupling_model(
-                self.current_edit_id, type=new_type
-            ):
-                self.refresh_coupling_list(select_id=self.current_edit_id)
-                self.coupling_changed.emit()
