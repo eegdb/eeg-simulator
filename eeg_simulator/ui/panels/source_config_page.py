@@ -7,7 +7,6 @@ from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QDoubleSpinBox,
-    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -91,8 +90,10 @@ class SourceConfigPage(NavigationPage):
         src_layout.addWidget(self.src_info_label)
         layout.addWidget(self.mne_group)
 
-        self.montage_group = QGroupBox(tr('panel_electrode_montage'))
-        montage_layout = QVBoxLayout(self.montage_group)
+        self.forward_group = QGroupBox(tr('panel_forward_model'))
+        forward_layout = QVBoxLayout(self.forward_group)
+        self.montage_group = self.forward_group
+        self.fwd_group = self.forward_group
 
         montage_row = QHBoxLayout()
         self.montage_label = QLabel(tr('label_electrode_layout'))
@@ -102,38 +103,19 @@ class SourceConfigPage(NavigationPage):
         self._populate_montage_combo()
         self.montage_combo.currentIndexChanged.connect(self._on_montage_combo_changed)
         montage_row.addWidget(self.montage_combo, 1)
-        montage_layout.addLayout(montage_row)
-
-        self.montage_hint_label = QLabel(tr('montage_select_hint'))
-        self.montage_hint_label.setWordWrap(True)
-        self.montage_hint_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
-        montage_layout.addWidget(self.montage_hint_label)
-        layout.addWidget(self.montage_group)
-
-        self.fwd_group = QGroupBox(tr('panel_forward_model'))
-        fwd_layout = QVBoxLayout(self.fwd_group)
-
-        self.fwd_workflow_frame = QFrame()
-        self.fwd_workflow_frame.setStyleSheet(self._hint_frame_style())
-        fwd_workflow_inner = QVBoxLayout(self.fwd_workflow_frame)
-        fwd_workflow_inner.setContentsMargins(12, 10, 12, 10)
-        self.fwd_workflow_label = QLabel(tr('fwd_workflow_hint'))
-        self.fwd_workflow_label.setWordWrap(True)
-        self.fwd_workflow_label.setStyleSheet(f"color: {get_color('blue')}; font-size: 12px;")
-        fwd_workflow_inner.addWidget(self.fwd_workflow_label)
-        fwd_layout.addWidget(self.fwd_workflow_frame)
+        forward_layout.addLayout(montage_row)
 
         self.compute_fwd_btn = QPushButton(tr('btn_compute_forward'))
         self.compute_fwd_btn.setStyleSheet(get_primary_btn_style())
         self.compute_fwd_btn.setToolTip(tr('tooltip_compute_forward'))
         self.compute_fwd_btn.clicked.connect(self._on_compute_forward)
-        fwd_layout.addWidget(self.compute_fwd_btn)
+        forward_layout.addWidget(self.compute_fwd_btn)
 
         self.fwd_info_label = QLabel(tr('fwd_not_loaded'))
         self.fwd_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
         self.fwd_info_label.setWordWrap(True)
-        fwd_layout.addWidget(self.fwd_info_label)
-        layout.addWidget(self.fwd_group)
+        forward_layout.addWidget(self.fwd_info_label)
+        layout.addWidget(self.forward_group)
 
         self.bem_group = QGroupBox(tr('bem_conductivity'))
         bem_layout = QVBoxLayout(self.bem_group)
@@ -174,14 +156,6 @@ class SourceConfigPage(NavigationPage):
         bem_layout.addWidget(self.make_bem_btn)
         layout.addWidget(self.bem_group)
         layout.addStretch()
-
-    @staticmethod
-    def _hint_frame_style():
-        return f"""
-            background-color: {get_color('bg_input')};
-            border-radius: 8px;
-            border: 1px solid {get_color('border')};
-        """
 
     def _populate_src_combo(self):
         src_options = [
@@ -402,7 +376,7 @@ class SourceConfigPage(NavigationPage):
 
     def update_theme(self):
         super().update_theme()
-        for group in [self.mne_group, self.montage_group, self.fwd_group, self.bem_group]:
+        for group in [self.mne_group, self.forward_group, self.bem_group]:
             group.setStyleSheet(f"""
                 QGroupBox {{
                     background-color: {get_color('bg_card')};
@@ -422,8 +396,6 @@ class SourceConfigPage(NavigationPage):
             self.src_info_label.setStyleSheet(f"color: {get_color('accent')}; font-size: 12px;")
         else:
             self.src_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
-        self.fwd_workflow_frame.setStyleSheet(self._hint_frame_style())
-        self.fwd_workflow_label.setStyleSheet(f"color: {get_color('blue')}; font-size: 12px;")
         self.update_forward_status()
 
     def update_texts(self):
@@ -431,13 +403,11 @@ class SourceConfigPage(NavigationPage):
         self.set_subtitle(tr('nav_source_config_subtitle'))
 
         self.mne_group.setTitle(tr('panel_source_space'))
-        self.montage_group.setTitle(tr('panel_electrode_montage'))
-        self.fwd_group.setTitle(tr('panel_forward_model'))
+        self.forward_group.setTitle(tr('panel_forward_model'))
         self.bem_group.setTitle(tr('bem_conductivity'))
 
         self.montage_label.setText(tr('label_electrode_layout'))
         self.montage_combo.setToolTip(tr('tooltip_select_montage'))
-        self.montage_hint_label.setText(tr('montage_select_hint'))
         self._populate_montage_combo()
 
         self.brain_cond_label.setText(f"{tr('bem_conductivity_brain')} (S/m):")
@@ -446,7 +416,6 @@ class SourceConfigPage(NavigationPage):
 
         self.sample_btn.setText(tr('btn_load_sample'))
         self.sample_btn.setToolTip(tr('tooltip_load_sample'))
-        self.fwd_workflow_label.setText(tr('fwd_workflow_hint'))
         self.compute_fwd_btn.setText(tr('btn_compute_forward'))
         self.compute_fwd_btn.setToolTip(tr('tooltip_compute_forward'))
         self.make_bem_btn.setText(tr('bem_make_model'))
