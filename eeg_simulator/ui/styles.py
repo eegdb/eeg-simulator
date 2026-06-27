@@ -116,20 +116,52 @@ QComboBox {{
     background-color: {c['bg_input']};
     color: {c['text_main']};
     border: 1px solid {c['border']};
-    padding: 5px;
+    padding: 5px 28px 5px 10px;
     border-radius: 5px;
+    min-width: 100px;
+    selection-background-color: {c['accent']};
+    selection-color: {c['text_inverse']};
+}}
+
+QComboBox:hover {{
+    border-color: {c['border_focus']};
+}}
+
+QComboBox:focus {{
+    border-color: {c['border_focus']};
+}}
+
+QComboBox:disabled {{
+    background-color: {c['bg_card']};
+    color: {c['text_muted']};
+    border-color: {c['border']};
+}}
+
+QComboBox::drop-down {{
+    border: none;
+    width: 24px;
 }}
 
 QComboBox QAbstractItemView {{
     background-color: {c['bg_card']};
     color: {c['text_main']};
     selection-background-color: {c['accent']};
+    selection-color: {c['text_inverse']};
+    border: 1px solid {c['border']};
     outline: none;
 }}
 
 QComboBox QAbstractItemView::item {{
     padding: 6px 10px;
     padding-left: 24px;
+    min-height: 22px;
+    background-color: {c['bg_card']};
+    color: {c['text_main']};
+}}
+
+QComboBox QAbstractItemView::item:hover {{
+    background-color: {c['bg_input']};
+    color: {c['text_main']};
 }}
 
 QComboBox QAbstractItemView::item:selected {{

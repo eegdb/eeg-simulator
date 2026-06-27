@@ -8,7 +8,14 @@ from PyQt6.QtCore import QTimer
 from ...ui.styles import COLORS
 from ...ui.themes import generate_stylesheet, get_color, set_theme
 from ...ui.widgets import NavigationView
-from ...ui.panels import SourceConfigPage, ElectrodeChannelsPage, OutputPage, SignalPage
+from ...ui.panels import (
+    SourceConfigPage,
+    SignalSourcesPage,
+    NoiseArtifactsPage,
+    ElectrodeChannelsPage,
+    OutputPage,
+    SignalPage,
+)
 from ...ui.menu import MainMenuBar
 from ...utils import tr, get_logger
 from ...utils.project_manager import ProjectManager
@@ -49,7 +56,9 @@ class SimulatorUI:
 
         # 创建各个页面
         self._sim.source_page = SourceConfigPage(self._sim)
+        self._sim.signal_sources_page = SignalSourcesPage(self._sim)
         self._sim.electrode_channels_page = ElectrodeChannelsPage(self._sim)
+        self._sim.noise_artifacts_page = NoiseArtifactsPage(self._sim)
         self._sim.output_page = OutputPage(self._sim)
         self._sim.signal_page = SignalPage(self._sim)
 
@@ -58,10 +67,12 @@ class SimulatorUI:
         self._sim.signal_page.time_window_spin.valueChanged.connect(self._sim.buffers._on_time_window_changed)
 
         # 添加页面到导航视图
-        self._sim.nav_view.add_page('source', '🧠', tr('nav_source_config'), self._sim.source_page)
-        self._sim.nav_view.add_page('electrode_channels', '📍', tr('nav_electrode_channels'), self._sim.electrode_channels_page)
-        self._sim.nav_view.add_page('output', '⚙️', tr('nav_output'), self._sim.output_page)
-        self._sim.nav_view.add_page('signal', '∿', tr('nav_signal'), self._sim.signal_page)
+        self._sim.nav_view.add_page('source', 'M', tr('nav_source_config'), self._sim.source_page)
+        self._sim.nav_view.add_page('signal_sources', 'S', tr('nav_signal_sources'), self._sim.signal_sources_page)
+        self._sim.nav_view.add_page('electrode_channels', 'E', tr('nav_electrode_channels'), self._sim.electrode_channels_page)
+        self._sim.nav_view.add_page('noise_artifacts', 'N', tr('nav_noise_artifacts'), self._sim.noise_artifacts_page)
+        self._sim.nav_view.add_page('output', 'O', tr('nav_output'), self._sim.output_page)
+        self._sim.nav_view.add_page('signal', '~', tr('nav_signal'), self._sim.signal_page)
 
         # 设置默认页面
         self._sim.nav_view.set_current_page('source')
@@ -253,7 +264,9 @@ class SimulatorUI:
         # 更新导航栏文本
         self._sim.nav_view.update_texts({
             'source': tr('nav_source_config'),
+            'signal_sources': tr('nav_signal_sources'),
             'electrode_channels': tr('nav_electrode_channels'),
+            'noise_artifacts': tr('nav_noise_artifacts'),
             'signal': tr('nav_signal'),
             'output': tr('nav_output'),
         })
@@ -263,7 +276,9 @@ class SimulatorUI:
 
         # 更新所有页面文本
         self._sim.source_page.update_texts()
+        self._sim.signal_sources_page.update_texts()
         self._sim.electrode_channels_page.update_texts()
+        self._sim.noise_artifacts_page.update_texts()
         self._sim.signal_page.update_texts()
         self._sim.output_page.update_texts()
 
@@ -320,12 +335,15 @@ class SimulatorUI:
 
         # 更新所有页面主题
         self._sim.source_page.update_theme()
+        self._sim.signal_sources_page.update_theme()
         self._sim.electrode_channels_page.update_theme()
+        self._sim.noise_artifacts_page.update_theme()
         self._sim.signal_page.update_theme()
         self._sim.output_page.update_theme()
 
         # 强制刷新所有页面以应用新主题
-        for page in [self._sim.source_page, self._sim.electrode_channels_page, 
+        for page in [self._sim.source_page, self._sim.signal_sources_page,
+                     self._sim.electrode_channels_page, self._sim.noise_artifacts_page,
                      self._sim.signal_page, self._sim.output_page]:
             page.update()
 

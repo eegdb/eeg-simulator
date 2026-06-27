@@ -114,7 +114,7 @@ class SignalPage(NavigationPage):
         self.highpass_spin.setRange(0, 100)
         self.highpass_spin.setValue(0.5)
         self.highpass_spin.setDecimals(1)
-        self.highpass_spin.setFixedWidth(52)
+        self.highpass_spin.setFixedWidth(82)
         self.highpass_spin.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
@@ -124,7 +124,7 @@ class SignalPage(NavigationPage):
         self.lowpass_spin.setRange(0, 500)
         self.lowpass_spin.setValue(100)
         self.lowpass_spin.setDecimals(1)
-        self.lowpass_spin.setFixedWidth(52)
+        self.lowpass_spin.setFixedWidth(82)
         self.lowpass_spin.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )

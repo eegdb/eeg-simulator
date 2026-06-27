@@ -101,8 +101,9 @@ class SimulatorSignal:
         if self._sim._mne_coupling_engine is None or not self._sim._coupling_models:
             return []
 
-        k = self._sim.source_page.knn_spin.value() if hasattr(self._sim, 'source_page') else 3
-        decay_length = self._sim.source_page.decay_spin.value() if hasattr(self._sim, 'source_page') else 0.02
+        coupling_page = getattr(self._sim, 'signal_sources_page', None)
+        k = coupling_page.knn_spin.value() if coupling_page is not None else 3
+        decay_length = coupling_page.decay_spin.value() if coupling_page is not None else 0.02
         coupling_sig = tuple(
             (cid, c.source_patch_id, c.target_patch_id, c.type, c.strength, c.delay)
             for cid, c in sorted(self._sim._coupling_models.items())

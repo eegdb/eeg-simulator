@@ -173,8 +173,8 @@ class SimulatorProject:
                 if hasattr(self._sim, 'signal_page') else {}
             ),
             "mne_coupling": (
-                self._sim.source_page.get_mne_coupling_settings()
-                if hasattr(self._sim, 'source_page') else {}
+                self._sim.signal_sources_page.get_mne_coupling_settings()
+                if hasattr(self._sim, 'signal_sources_page') else {}
             ),
         }
 
@@ -371,16 +371,19 @@ class SimulatorProject:
         # 更新源配置页面
         if hasattr(self._sim, 'source_page'):
             # 同步噪声配置
-            if hasattr(self._sim, 'noise_configs'):
-                self._sim.source_page.active_noise_configs = self._sim.noise_configs
-            self._sim.source_page._update_patch_stats()
-            self._sim.source_page._update_coupling_stats()
-            self._sim.source_page._update_noise_stats()
             if self._sim.bem_conductivity and hasattr(self._sim.source_page, 'apply_bem_conductivity'):
                 self._sim.source_page.apply_bem_conductivity(self._sim.bem_conductivity)
+
+        if hasattr(self._sim, 'signal_sources_page'):
+            self._sim.signal_sources_page._update_patch_stats()
+            self._sim.signal_sources_page._update_coupling_stats()
             saved_mne = getattr(self._sim, '_saved_mne_coupling', None)
             if saved_mne:
-                self._sim.source_page.apply_mne_coupling_settings(saved_mne)
+                self._sim.signal_sources_page.apply_mne_coupling_settings(saved_mne)
+
+        if hasattr(self._sim, 'noise_artifacts_page'):
+            self._sim.noise_artifacts_page.active_noise_configs = list(getattr(self._sim, 'noise_configs', []))
+            self._sim.noise_artifacts_page._update_noise_stats()
 
         # 更新输出页面
         if hasattr(self._sim, 'output_page'):
