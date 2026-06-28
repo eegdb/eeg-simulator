@@ -115,7 +115,6 @@ class SourceConfigPage(NavigationPage):
         self.fwd_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
         self.fwd_info_label.setWordWrap(True)
         forward_layout.addWidget(self.fwd_info_label)
-        layout.addWidget(self.forward_group)
 
         self.bem_group = QGroupBox(tr('bem_conductivity'))
         bem_layout = QVBoxLayout(self.bem_group)
@@ -154,7 +153,13 @@ class SourceConfigPage(NavigationPage):
         self.make_bem_btn.setStyleSheet(get_primary_btn_style())
         self.make_bem_btn.clicked.connect(self._on_make_bem_model)
         bem_layout.addWidget(self.make_bem_btn)
+
+        self.bem_info_label = QLabel(tr('bem_not_generated'))
+        self.bem_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
+        self.bem_info_label.setWordWrap(True)
+        bem_layout.addWidget(self.bem_info_label)
         layout.addWidget(self.bem_group)
+        layout.addWidget(self.forward_group)
         layout.addStretch()
 
     def _populate_src_combo(self):
@@ -356,9 +361,32 @@ class SourceConfigPage(NavigationPage):
             )
             self.parent_simulator.bem_model = bem_model
             self.parent_simulator.bem_conductivity = conductivity
+            self.update_bem_status()
             QMessageBox.information(self, tr('success'), tr('bem_model_created'))
         except Exception as e:
             QMessageBox.critical(self, tr('error'), tr('msg_bem_failed', str(e)))
+
+    def update_bem_status(self):
+        text, color = self._bem_status_text()
+        self.bem_info_label.setText(text)
+        self.bem_info_label.setStyleSheet(f"color: {color}; font-size: 12px;")
+
+    def _bem_status_text(self) -> tuple[str, str]:
+        sim = self.parent_simulator
+        conductivity = getattr(sim, 'bem_conductivity', None)
+        if getattr(sim, 'bem_model', None) is not None and conductivity:
+            conductivity_text = ', '.join(f'{v:.5g}' for v in conductivity)
+            return (
+                tr('bem_generated_info', self.subject or 'sample', 4, conductivity_text),
+                get_color('accent'),
+            )
+        if conductivity:
+            conductivity_text = ', '.join(f'{v:.5g}' for v in conductivity)
+            return (
+                tr('bem_saved_conductivity_info', conductivity_text),
+                get_color('text_muted'),
+            )
+        return tr('bem_not_generated'), get_color('text_muted')
 
     def get_bem_conductivity(self):
         return (
@@ -397,6 +425,7 @@ class SourceConfigPage(NavigationPage):
         else:
             self.src_info_label.setStyleSheet(f"color: {get_color('text_muted')}; font-size: 12px;")
         self.update_forward_status()
+        self.update_bem_status()
 
     def update_texts(self):
         self.set_title(tr('nav_source_config'))
@@ -425,3 +454,4 @@ class SourceConfigPage(NavigationPage):
         else:
             self.src_info_label.setText(tr('not_loaded'))
         self.update_forward_status()
+        self.update_bem_status()

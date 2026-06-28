@@ -44,6 +44,10 @@ class SimulatorPatchOps:
         self._sim._dipole_counter = max_dipole
         self._sim._coupling_counter = max_coupling
 
+    def _invalidate_signal_dependent_caches(self):
+        self._sim.signal.invalidate_mne_coupling_cache()
+        self._sim.signal.invalidate_heatmap_forward_cache()
+
     def create_patch(self, position, orientation, radius=0.0, label_name=None, hemi=None, 
                      name=None, waveform_type='sin', waveform_params=None, vertno=None, src_idx=None,
                      anchor_dipole=None):
@@ -75,7 +79,7 @@ class SimulatorPatchOps:
         patch.set_radius(radius)
         self._sim.patches[patch_id] = patch
         self._sim._current_patch_id = patch_id
-        self._sim.signal.invalidate_mne_coupling_cache()
+        self._invalidate_signal_dependent_caches()
 
         return patch_id
 
@@ -94,7 +98,7 @@ class SimulatorPatchOps:
             self._sim._current_patch_id = None
 
         logger.info(f"删除Patch: {patch_id}")
-        self._sim.signal.invalidate_mne_coupling_cache()
+        self._invalidate_signal_dependent_caches()
 
     def modify_patch(self, patch_id, name=None, waveform_type=None, waveform_params=None, radius=None):
         """修改 Patch
@@ -120,7 +124,7 @@ class SimulatorPatchOps:
             patch.radius = radius
 
         logger.info(f"修改Patch: {patch_id}")
-        self._sim.signal.invalidate_mne_coupling_cache()
+        self._invalidate_signal_dependent_caches()
 
     def create_dipole(self, position, orientation, hemi=None, vertno=None, src_idx=None):
         """创建偶极子（不放入任何 Patch，用于 PatchManager 中临时创建）
@@ -223,6 +227,7 @@ class SimulatorPatchOps:
     def set_noise_configs(self, configs):
         """设置噪声配置"""
         self._sim.noise_configs = configs
+        self._sim.signal.invalidate_heatmap_forward_cache()
 
     def add_coupling_model(self, source_patch_id, target_patch_id, type='linear', strength=0.5, delay=0):
         """添加耦合模型"""
@@ -242,7 +247,7 @@ class SimulatorPatchOps:
         self._sim._coupling_engine.add_coupling(coupling)
 
         logger.info(f"创建耦合模型: {coupling_id}")
-        self._sim.signal.invalidate_mne_coupling_cache()
+        self._invalidate_signal_dependent_caches()
         return coupling_id
 
     def delete_coupling_model(self, coupling_id):
@@ -251,7 +256,7 @@ class SimulatorPatchOps:
             del self._sim._coupling_models[coupling_id]
             self._sim._coupling_engine.remove_coupling(coupling_id)
             logger.info(f"删除耦合模型: {coupling_id}")
-            self._sim.signal.invalidate_mne_coupling_cache()
+            self._invalidate_signal_dependent_caches()
 
     def modify_coupling_model(self, coupling_id, strength=None, delay=None, type=None):
         """修改已有耦合模型的参数（保持 ID 不变）"""
@@ -269,12 +274,12 @@ class SimulatorPatchOps:
             coupling.reset_history()
 
         logger.info(f"修改耦合模型: {coupling_id}")
-        self._sim.signal.invalidate_mne_coupling_cache()
+        self._invalidate_signal_dependent_caches()
         return True
 
     def clear_coupling_models(self):
         """清除所有耦合模型"""
         self._sim._coupling_models.clear()
         self._sim._coupling_engine.clear()
-        self._sim.signal.invalidate_mne_coupling_cache()
+        self._invalidate_signal_dependent_caches()
         logger.info("已清除所有耦合模型")

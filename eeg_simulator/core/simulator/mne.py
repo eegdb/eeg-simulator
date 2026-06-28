@@ -161,7 +161,7 @@ class SimulatorMNE:
             bem,
             eeg=True,
             meg=False,
-            mindist=5.0,
+            mindist=0.0,
             n_jobs=1,
             verbose=False,
         )

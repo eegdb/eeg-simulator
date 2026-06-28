@@ -39,6 +39,7 @@ class MNESimulator:
         # 构建源点到顶点索引的映射
         self._build_source_mapping()
         self._logged_dipole_match = None
+        self._logged_dipole_snaps = None
         self._loaded_src_verts = None
         self._forward_vert_positions = None
         self._log_source_space_alignment()
@@ -139,7 +140,15 @@ class MNESimulator:
         for hemi_idx, s in enumerate(self.src_space):
             hemi = 'lh' if hemi_idx == 0 else 'rh'
             for i, vertno in enumerate(s.get('vertno', ())):
-                positions[(hemi, int(vertno))] = np.asarray(s['rr'][i], dtype=float)
+                vert_idx = int(vertno)
+                rr = s.get('rr')
+                if rr is None:
+                    continue
+                if 0 <= vert_idx < len(rr):
+                    pos = rr[vert_idx]
+                else:
+                    pos = rr[i]
+                positions[(hemi, vert_idx)] = np.asarray(pos, dtype=float)
         self._forward_vert_positions = positions
         return positions
 
@@ -150,7 +159,12 @@ class MNESimulator:
         if hemi is not None and vertno is not None:
             key = (hemi, int(vertno))
             if key in vert_to_idx:
-                return key
+                return {
+                    'key': key,
+                    'snapped': False,
+                    'original_key': key,
+                    'distance_m': 0.0,
+                }
 
         position = getattr(dipole, 'position', None)
         if position is None:
@@ -170,8 +184,53 @@ class MNESimulator:
                 best_dist = dist
                 best_key = key
         if best_key is not None and best_dist <= max_snap_dist_m:
-            return best_key
+            original_key = None
+            if hemi is not None and vertno is not None:
+                original_key = (hemi, int(vertno))
+            return {
+                'key': best_key,
+                'snapped': True,
+                'original_key': original_key,
+                'distance_m': best_dist,
+            }
         return None
+
+    def _log_snapped_dipoles(self, snapped):
+        snap_key = tuple(
+            (
+                entry['patch_id'],
+                entry['dipole_id'],
+                entry.get('from_hemi'),
+                entry.get('from_vertno'),
+                entry.get('to_hemi'),
+                entry.get('to_vertno'),
+                round(float(entry.get('distance_m', 0.0)), 6),
+            )
+            for entry in snapped
+        )
+        if snap_key == self._logged_dipole_snaps:
+            return
+        self._logged_dipole_snaps = snap_key
+
+        logger.warning(
+            "SourceEstimate: %d 个偶极子不在前向模型源空间中，已按位置吸附到邻近有效 forward 顶点",
+            len(snapped),
+        )
+        for entry in snapped:
+            from_vert = (
+                f"{entry['from_hemi']}-v{entry['from_vertno']}"
+                if entry.get('from_hemi') and entry.get('from_vertno') is not None
+                else '?'
+            )
+            to_vert = f"{entry['to_hemi']}-v{entry['to_vertno']}"
+            logger.warning(
+                "  吸附: patch=%s, dipole=%s, %s -> %s, distance=%.2f mm",
+                entry['patch_id'],
+                entry['dipole_id'],
+                from_vert,
+                to_vert,
+                float(entry.get('distance_m', 0.0)) * 1000.0,
+            )
 
     def _describe_unmatched_dipole(self, hemi, vertno):
         """推断未匹配原因"""
@@ -231,7 +290,8 @@ class MNESimulator:
         unmatched = []
         for patch_id, patch in patches.items():
             for dipole in getattr(patch, 'dipoles', []):
-                if self._resolve_dipole_vertex(dipole, vert_to_idx) is None:
+                resolved = self._resolve_dipole_vertex(dipole, vert_to_idx)
+                if resolved is None:
                     unmatched.append({
                         'patch_id': patch_id,
                         'dipole_id': getattr(dipole, 'id', '?'),
@@ -277,6 +337,7 @@ class MNESimulator:
         total_dipoles = 0
         matched_dipoles = 0
         unmatched_dipoles = []
+        snapped_dipoles = []
         for patch_id, data in patch_data.items():
             signals = data.get('signals', np.zeros(n_samples))
             dipoles = data.get('dipoles', [])
@@ -294,7 +355,22 @@ class MNESimulator:
                     })
                     continue
 
-                hemi, vertno = resolved
+                hemi, vertno = resolved['key']
+                if resolved.get('snapped'):
+                    original_key = resolved.get('original_key')
+                    from_hemi, from_vertno = (
+                        original_key if original_key is not None else
+                        (getattr(dipole, 'hemi', None), getattr(dipole, 'vertno', None))
+                    )
+                    snapped_dipoles.append({
+                        'patch_id': patch_id,
+                        'dipole_id': dipole_id,
+                        'from_hemi': from_hemi,
+                        'from_vertno': from_vertno,
+                        'to_hemi': hemi,
+                        'to_vertno': vertno,
+                        'distance_m': resolved.get('distance_m', 0.0),
+                    })
                 data_idx = vert_to_idx.get((hemi, vertno))
                 if data_idx is not None:
                     matched_dipoles += 1
@@ -311,6 +387,8 @@ class MNESimulator:
 
         if total_dipoles > 0 and unmatched_dipoles:
             self._log_unmatched_dipoles(matched_dipoles, total_dipoles, unmatched_dipoles)
+        if snapped_dipoles:
+            self._log_snapped_dipoles(snapped_dipoles)
         
         # 创建时间数组
         tstep = 1.0 / self.sampling_rate

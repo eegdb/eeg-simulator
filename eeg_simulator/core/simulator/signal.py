@@ -1,5 +1,7 @@
 """信号生成、耦合、投影、噪声与实时滤波。"""
 
+import copy
+
 import numpy as np
 
 from ...models.coupling import PatchCouplingEngine
@@ -642,6 +644,25 @@ class SimulatorSignal:
             data = sp_signal.filtfilt(b, a, data)
         return data
 
+    def _capture_coupling_state(self) -> dict:
+        snapshots = {}
+        for coupling_id, coupling in self._sim._coupling_models.items():
+            history = getattr(coupling, '_history', None)
+            snapshots[coupling_id] = {
+                'history': None if history is None else history.copy(),
+                'write_idx': getattr(coupling, '_write_idx', 0),
+            }
+        return snapshots
+
+    def _restore_coupling_state(self, snapshots: dict) -> None:
+        for coupling_id, snapshot in snapshots.items():
+            coupling = self._sim._coupling_models.get(coupling_id)
+            if coupling is None:
+                continue
+            history = snapshot.get('history')
+            coupling._history = None if history is None else history.copy()
+            coupling._write_idx = snapshot.get('write_idx', 0)
+
     def _get_forward_series_for_heatmap(self, n_samples: int):
         """为热力图分析生成全通道前向投影时间序列"""
         if not (
@@ -662,6 +683,8 @@ class SimulatorSignal:
         if self._heatmap_forward_cache_key == cache_key and self._heatmap_forward_series is not None:
             return self._heatmap_forward_series
         t = np.linspace(t_start, t_end, n_samples, endpoint=False)
+        signal_state_snapshot = copy.deepcopy(self._sim._signal_states)
+        coupling_state_snapshot = self._capture_coupling_state()
         try:
             patch_signals = self._generate_patch_signals_batch(t, n_samples)
             patch_signals = self._apply_coupling_batch(patch_signals, t, n_samples)
@@ -675,6 +698,10 @@ class SimulatorSignal:
         except Exception as e:
             logger.debug(f"热力图全通道投影失败: {e}")
             return None
+        finally:
+            self._sim._signal_states.clear()
+            self._sim._signal_states.update(signal_state_snapshot)
+            self._restore_coupling_state(coupling_state_snapshot)
 
     def _bandpass_for_analysis(self, data_uV: np.ndarray, sr: float, fmin: float, fmax: float) -> np.ndarray:
         """零相位带通（分析窗口专用，不改变实时滤波状态）"""
@@ -706,6 +733,10 @@ class SimulatorSignal:
 
     def _band_power_from_uV_series(self, series_uV, sr, fmin, fmax) -> float:
         data = self._filter_window_offline(np.asarray(series_uV, dtype=float))
+        return self._band_power_from_filtered_uV_series(data, sr, fmin, fmax)
+
+    def _band_power_from_filtered_uV_series(self, series_uV, sr, fmin, fmax) -> float:
+        data = np.asarray(series_uV, dtype=float)
         if fmax is None or (fmin, fmax) == HEATMAP_BAND_RANGES['broadband']:
             return self._total_power_from_uV_series(data)
         band_data = self._bandpass_for_analysis(data, sr, fmin, fmax)
@@ -714,6 +745,35 @@ class SimulatorSignal:
     def _band_power_from_voltage_series(self, series_v, sr, fmin, fmax) -> float:
         series_uV = np.asarray(series_v, dtype=float) * 1e6
         return self._band_power_from_uV_series(series_uV, sr, fmin, fmax)
+
+    def _compute_channel_heatmap_power_arrays(
+        self,
+        channel_names,
+        n_samples: int,
+        sr: float,
+        fmin: float,
+        fmax: float,
+    ) -> tuple[list[str], np.ndarray, np.ndarray]:
+        min_samples = max(64, int(sr * 0.5))
+        names = []
+        powers = []
+        broadband = []
+        for ch_name in channel_names:
+            buf = self._sim.eeg_buffer.get(ch_name)
+            if buf is None or len(buf) == 0:
+                continue
+            take = min(n_samples, len(buf))
+            if take < min_samples:
+                continue
+            data = self._filter_window_offline(buf[-take:])
+            names.append(ch_name)
+            powers.append(self._band_power_from_filtered_uV_series(data, sr, fmin, fmax))
+            broadband.append(self._total_power_from_uV_series(data))
+        return (
+            names,
+            np.asarray(powers, dtype=float),
+            np.asarray(broadband, dtype=float),
+        )
 
     def compute_heatmap_band_powers_for_topomap(self, n_samples: int) -> dict:
         """计算频带功率地形图数据（0–1 归一化）。
@@ -740,7 +800,7 @@ class SimulatorSignal:
                 if name in forward_series:
                     series_uV = np.asarray(forward_series[name], dtype=float) * 1e6
                     series_uV = self._filter_window_offline(series_uV)
-                    powers.append(self._band_power_from_uV_series(series_uV, sr, fmin, fmax))
+                    powers.append(self._band_power_from_filtered_uV_series(series_uV, sr, fmin, fmax))
                     broadband.append(self._total_power_from_uV_series(series_uV))
                 else:
                     powers.append(0.0)
@@ -759,44 +819,26 @@ class SimulatorSignal:
             montage = self._sim.electrode_channels_page.get_current_montage()
 
         if montage is None:
-            chs = list(self._sim.selected_channels or [])
-            powers = self.compute_heatmap_band_powers(chs, n_samples)
+            names, powers, broadband = self._compute_channel_heatmap_power_arrays(
+                list(self._sim.selected_channels or []), n_samples, sr, fmin, fmax
+            )
             return {
                 'mode': 'montage',
-                'powers': powers,
-                'names': chs,
+                'powers': self._normalize_heatmap_powers(
+                    powers, band_key, broadband=broadband
+                )['powers'],
+                'names': names,
                 'band': band_key,
             }
 
-        mapping = self._sim.eeg_channel_mapping or {}
-        names = []
-        powers = []
-        broadband = []
-        for ch in montage.ch_names:
-            series_uV = None
-            if forward_series:
-                mapped = mapping.get(ch)
-                if mapped and mapped in forward_series:
-                    series_uV = np.asarray(forward_series[mapped], dtype=float) * 1e6
-            elif ch in self._sim.eeg_buffer:
-                buf = self._sim.eeg_buffer[ch]
-                if len(buf) >= min_samples:
-                    series_uV = buf[-n_samples:]
-
-            if series_uV is None or len(series_uV) < min_samples:
-                p = 0.0
-                bb = 0.0
-            else:
-                series_uV = self._filter_window_offline(series_uV)
-                p = self._band_power_from_uV_series(series_uV, sr, fmin, fmax)
-                bb = self._total_power_from_uV_series(series_uV)
-            names.append(ch)
-            powers.append(p)
-            broadband.append(bb)
-
-        powers = np.asarray(powers, dtype=float)
+        selected_names = list(self._sim.selected_channels or [])
+        if not selected_names:
+            selected_names = [ch for ch in montage.ch_names if ch in self._sim.eeg_buffer]
+        names, powers, broadband = self._compute_channel_heatmap_power_arrays(
+            selected_names, n_samples, sr, fmin, fmax
+        )
         return self._normalize_heatmap_powers(
-            powers, band_key, names=names, broadband=np.asarray(broadband, dtype=float)
+            powers, band_key, names=names, broadband=broadband
         )
 
     def compute_heatmap_band_powers(self, channel_names, n_samples: int) -> np.ndarray:
@@ -806,20 +848,31 @@ class SimulatorSignal:
         min_samples = max(64, int(self._sim.sampling_rate * 0.5))
 
         powers = []
+        broadband = []
         for ch_name in channel_names:
             buf = self._sim.eeg_buffer.get(ch_name)
             if buf is None or len(buf) == 0:
                 powers.append(0.0)
+                broadband.append(0.0)
                 continue
             take = min(n_samples, len(buf))
             if take < min_samples:
                 powers.append(0.0)
+                broadband.append(0.0)
                 continue
             data = self._filter_window_offline(buf[-take:])
-            powers.append(self._band_power_from_uV_series(data, self._sim.sampling_rate, fmin, fmax))
+            powers.append(
+                self._band_power_from_filtered_uV_series(
+                    data, self._sim.sampling_rate, fmin, fmax
+                )
+            )
+            broadband.append(self._total_power_from_uV_series(data))
 
         powers = np.asarray(powers, dtype=float)
-        return self._normalize_heatmap_powers(powers, band_key)['powers']
+        broadband = np.asarray(broadband, dtype=float)
+        return self._normalize_heatmap_powers(
+            powers, band_key, broadband=broadband
+        )['powers']
 
     def _normalize_heatmap_powers(
         self,
@@ -841,6 +894,8 @@ class SimulatorSignal:
             max_bb = float(np.max(broadband))
             if max_bb > 0 and max_power / max_bb < HEATMAP_BAND_MIN_BB_RATIO:
                 display = np.zeros_like(powers)
+            elif max_bb > 0:
+                display = np.clip(powers / max_bb, 0.0, 1.0)
             elif max_power > 0:
                 display = powers / max_power
             else:

@@ -138,7 +138,7 @@ class Translator(QObject):
             'label_show_labels': '显示电极标签',
             'label_show_heatmap': '显示热力图',
             'label_show_fft': '显示 FFT 频谱',
-            'label_waveform_autoscale': '波形自动占满',
+            'label_waveform_autoscale': '自适应',
             'tooltip_waveform_autoscale': '按当前时间窗口内的幅值自动缩放各通道波形，占满显示区域',
             'label_view_mode': '视图模式:',
             'view_electrode_map': '电极图',
@@ -275,6 +275,9 @@ class Translator(QObject):
             'bem_conductivity_scalp': '头皮:',
             'bem_make_model': '生成 BEM 模型',
             'bem_model_created': 'BEM 模型生成成功',
+            'bem_not_generated': '尚未生成自定义 BEM。生成前向模型时将使用 MNE Sample 自带 BEM；如已生成自定义 BEM，则会优先使用当前 BEM。',
+            'bem_generated_info': '已生成 BEM: subject={}, ico={}, conductivity=({}) S/m\n重新生成前向模型会使用当前 BEM；只有修改导电率或更换 subject 时才需要重新生成 BEM。',
+            'bem_saved_conductivity_info': '已保存 BEM 导电率: ({}) S/m\n当前会话尚未生成自定义 BEM；生成前向模型时将使用 Sample 自带 BEM，除非先点击生成 BEM 模型。',
             
             # 噪声设置
             'noise_settings': '噪声设置',
@@ -323,7 +326,7 @@ class Translator(QObject):
             # NavigationView 导航
             'nav_source_config': '模型准备',
             'nav_sidebar_title': 'EEG Simulator',
-            'nav_source_config_subtitle': '加载 MNE 源空间，选择 Montage，并准备 BEM / Forward 模型',
+            'nav_source_config_subtitle': '加载 MNE 源空间，生成 BEM，再根据 Montage 生成 Forward 模型',
             'nav_signal_sources': '信号源',
             'nav_signal_sources_subtitle': '配置 Patch、波形和耦合关系',
             'nav_electrode_channels': '电极与通道',
@@ -824,6 +827,9 @@ class Translator(QObject):
             'bem_conductivity_scalp': 'Scalp:',
             'bem_make_model': 'Generate BEM Model',
             'bem_model_created': 'BEM Model Created Successfully',
+            'bem_not_generated': 'No custom BEM has been generated. Forward generation will use the MNE Sample BEM; if a custom BEM is generated, it will be preferred.',
+            'bem_generated_info': 'BEM generated: subject={}, ico={}, conductivity=({}) S/m\nRegenerating the forward model will use this BEM. Regenerate BEM only after changing conductivity or subject.',
+            'bem_saved_conductivity_info': 'Saved BEM conductivity: ({}) S/m\nNo custom BEM is available in this session; forward generation will use the Sample BEM unless you generate BEM first.',
             
             # Noise settings
             'noise_settings': 'Noise Settings',
@@ -872,7 +878,7 @@ class Translator(QObject):
             # NavigationView Navigation
             'nav_source_config': 'Model',
             'nav_sidebar_title': 'EEG Simulator',
-            'nav_source_config_subtitle': 'Load MNE source space, choose montage, and prepare BEM / forward model',
+            'nav_source_config_subtitle': 'Load source space, generate BEM, then generate forward from montage',
             'nav_signal_sources': 'Sources',
             'nav_signal_sources_subtitle': 'Configure patches, waveforms and coupling relationships',
             'nav_electrode_channels': 'Electrode & Channels',

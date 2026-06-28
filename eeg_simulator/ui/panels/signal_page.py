@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QFrame, QSizePolicy, QSplitter, QComboBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from ..themes import get_color
+from ..themes import CHECKMARK_ICON, get_color, get_theme
 from ..widgets.navigation_view import NavigationPage
 from ..widgets.head_layout import HeatmapOverlayWidget
 from ...utils import tr
@@ -24,6 +24,58 @@ def _add_equal_width_cells(parent_layout, cell_widgets_list):
             cell_layout.addWidget(widget)
         cell_layout.addStretch()
         parent_layout.addWidget(cell, 1)
+
+def _strong_checkbox_style():
+    theme = get_theme()
+    is_light = theme.get('name') == 'light'
+    border = '#0f172a' if is_light else '#d4d4d8'
+    bg = '#ffffff' if is_light else '#18181b'
+    hover_bg = '#f8fafc' if is_light else '#27272a'
+    disabled_border = '#94a3b8' if is_light else '#52525b'
+    checkmark = CHECKMARK_ICON
+    return f"""
+        QCheckBox {{
+            color: {get_color('text_main')};
+            spacing: 8px;
+            background: transparent;
+        }}
+        QCheckBox::indicator {{
+            width: 16px;
+            height: 16px;
+            min-width: 16px;
+            min-height: 16px;
+            max-width: 16px;
+            max-height: 16px;
+            border-radius: 3px;
+            border: 2px solid {border};
+            background-color: {bg};
+            image: none;
+        }}
+        QCheckBox::indicator:unchecked {{
+            border: 2px solid {border};
+            background-color: {bg};
+            image: none;
+        }}
+        QCheckBox::indicator:unchecked:hover {{
+            border-color: {get_color('border_focus')};
+            background-color: {hover_bg};
+        }}
+        QCheckBox::indicator:checked {{
+            border: 2px solid {get_color('accent')};
+            background-color: {get_color('accent')};
+            image: url({checkmark});
+        }}
+        QCheckBox::indicator:checked:hover {{
+            border-color: {get_color('accent_hover')};
+            background-color: {get_color('accent_hover')};
+            image: url({checkmark});
+        }}
+        QCheckBox::indicator:disabled {{
+            border-color: {disabled_border};
+            background-color: {get_color('bg_input')};
+        }}
+    """
+
 
 def configure_plot_for_zoom(plot):
     """配置 PlotItem 支持滚轮缩放，禁用拖动"""
@@ -187,6 +239,7 @@ class SignalPage(NavigationPage):
         self.show_heatmap_cb.setChecked(False)
         self.show_fft_cb = QCheckBox(tr('label_show_fft'))
         self.show_fft_cb.setChecked(False)
+        self._apply_checkbox_styles()
         _add_equal_width_cells(side_view_layout, [
             [self.show_heatmap_cb],
             [self.show_fft_cb],
@@ -568,12 +621,23 @@ class SignalPage(NavigationPage):
         if hasattr(self, 'heatmap_widget') and hasattr(self.heatmap_widget, 'set_from_info'):
             self.heatmap_widget.set_from_info(info)
     
+    def _apply_checkbox_styles(self):
+        style = _strong_checkbox_style()
+        for checkbox in (
+            self.notch_cb,
+            self.waveform_autoscale_cb,
+            self.show_heatmap_cb,
+            self.show_fft_cb,
+        ):
+            checkbox.setStyleSheet(style)
+
     def update_theme(self):
         """更新主题颜色"""
         # 调用父类方法更新基础样式（标题、背景等）
         super().update_theme()
         
         from ..themes import get_color
+        self._apply_checkbox_styles()
         
         # 更新图表背景
         bg_color = get_color('bg_card')
