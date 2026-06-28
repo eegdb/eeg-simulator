@@ -172,7 +172,13 @@ class SimulatorSignal:
             }
         return patch_data
 
-    def _project_to_electrodes_batch(self, patch_signals, n_samples, start_time=None):
+    def _project_to_electrodes_batch(
+        self,
+        patch_signals,
+        n_samples,
+        start_time=None,
+        return_all_data: bool = False,
+    ):
         """批量投影到电极"""
         if self._sim._mne_simulator is not None and self._sim._mne_simulator.is_ready():
             patch_data = self._build_patch_data(patch_signals, n_samples)
@@ -228,14 +234,16 @@ class SimulatorSignal:
                     logger.warning(f"没有匹配的通道! 选中: {self._sim.selected_channels}, "
                                  f"可用: {list(all_data.keys())[:10]}...")
                     # 完全回退到简化投影
-                    return self._simplified_projection_batch(patch_signals, n_samples)
+                    fallback = self._simplified_projection_batch(patch_signals, n_samples)
+                    return (fallback, None) if return_all_data else fallback
 
-                return eeg_data
+                return (eeg_data, all_data) if return_all_data else eeg_data
             except Exception as e:
                 logger.error(f"MNE投影失败: {e}")
 
         # 简化投影
-        return self._simplified_projection_batch(patch_signals, n_samples)
+        fallback = self._simplified_projection_batch(patch_signals, n_samples)
+        return (fallback, None) if return_all_data else fallback
 
     def _simplified_projection_batch(self, patch_signals, n_samples):
         """简化投影 - 用于EEG通道"""
@@ -824,6 +832,38 @@ class SimulatorSignal:
         )
         return self._normalize_heatmap_powers(
             powers, band_key, names=names, broadband=broadband
+        )
+
+    def compute_heatmap_band_powers_from_forward_series(self, forward_series: dict) -> dict:
+        """使用已经生成好的全通道 forward 数据计算热力图，避免 UI 刷新时二次 forward。"""
+        if not forward_series or self._sim._mne_simulator is None:
+            return {'mode': 'montage', 'powers': np.asarray([]), 'names': [], 'band': 'alpha'}
+
+        import mne
+
+        band_key = self._sim.signal_page.get_heatmap_band()
+        fmin, fmax = self._resolve_heatmap_band(band_key)
+        sr = self._sim.sampling_rate
+        info = self._sim._mne_simulator.info
+        picks = mne.pick_types(info, meg=False, eeg=True, exclude=[])
+        powers = []
+        broadband = []
+        for pick in picks:
+            name = info['ch_names'][pick]
+            if name in forward_series:
+                series_uV = np.asarray(forward_series[name], dtype=float) * 1e6
+                series_uV = self._filter_window_offline(series_uV)
+                powers.append(self._band_power_from_filtered_uV_series(series_uV, sr, fmin, fmax))
+                broadband.append(self._total_power_from_uV_series(series_uV))
+            else:
+                powers.append(0.0)
+                broadband.append(0.0)
+        return self._normalize_heatmap_powers(
+            np.asarray(powers, dtype=float),
+            band_key,
+            mode='forward',
+            info=info,
+            broadband=np.asarray(broadband, dtype=float),
         )
 
     def compute_heatmap_band_powers(self, channel_names, n_samples: int) -> np.ndarray:

@@ -42,10 +42,21 @@ class SimulationWorker(QObject):
             timings['source_ms'] = (time.perf_counter() - section) * 1000.0
 
             section = time.perf_counter()
-            eeg_data = self._sim.signal._project_to_electrodes_batch(
-                patch_signals, n_samples, start_time=t_start
+            eeg_data, forward_series = self._sim.signal._project_to_electrodes_batch(
+                patch_signals,
+                n_samples,
+                start_time=t_start,
+                return_all_data=True,
             )
             timings['project_ms'] = (time.perf_counter() - section) * 1000.0
+
+            heatmap_result = None
+            if forward_series is not None:
+                section = time.perf_counter()
+                heatmap_result = self._sim.signal.compute_heatmap_band_powers_from_forward_series(
+                    forward_series
+                )
+                timings['heatmap_power_ms'] = (time.perf_counter() - section) * 1000.0
 
             if self._sim.noise_configs:
                 section = time.perf_counter()
@@ -59,6 +70,7 @@ class SimulationWorker(QObject):
                 'n_samples': n_samples,
                 'patch_signals': patch_signals,
                 'eeg_data': eeg_data,
+                'heatmap_result': heatmap_result,
                 'timings': timings,
             })
         except Exception as e:
@@ -79,6 +91,7 @@ class SimulatorSimulation:
         self._chunk_seconds = 1.0
         self._prefill_seconds = 1.5
         self._max_queue_seconds = 3.0
+        self._latest_heatmap_result = None
 
     def _start_worker(self):
         self._stop_worker()
@@ -94,6 +107,7 @@ class SimulatorSimulation:
     def _stop_worker(self):
         self._worker_busy = False
         self._pending_batches.clear()
+        self._latest_heatmap_result = None
         if self._worker_thread is not None:
             self._worker_thread.quit()
             self._worker_thread.wait()
@@ -197,6 +211,7 @@ class SimulatorSimulation:
         self._sim._last_update_time = None
         self._pending_batches.clear()
         self._generated_until = 0.0
+        self._latest_heatmap_result = None
 
         # 重置信号生成状态，确保从初始相位开始
         self._sim._signal_states.clear()
@@ -342,6 +357,8 @@ class SimulatorSimulation:
             batch['pos'] = 0
             self._pending_batches.append(batch)
             self._generated_until = max(self._generated_until, float(batch['t_end']))
+            if batch.get('heatmap_result') is not None:
+                self._latest_heatmap_result = batch['heatmap_result']
             self._log_realtime_perf(
                 int(batch['n_samples']),
                 batch.get('timings') or {},
@@ -370,13 +387,14 @@ class SimulatorSimulation:
             return
         self._sim._last_perf_log_time = now
         logger.info(
-            "实时性能: samples=%d queued=%.2fs worker=%.1fms(source=%.1f project=%.1f noise=%.1f) "
+            "实时性能: samples=%d queued=%.2fs worker=%.1fms(source=%.1f project=%.1f heatmap_power=%.1f noise=%.1f) "
             "ui=%.1fms(buffer=%.1f plot=%.1f heatmap=%.1f)",
             n_samples,
             self._queued_seconds(),
             worker_ms,
             float(timings.get('source_ms', 0.0)) if timings else 0.0,
             float(timings.get('project_ms', 0.0)) if timings else 0.0,
+            float(timings.get('heatmap_power_ms', 0.0)) if timings else 0.0,
             float(timings.get('noise_ms', 0.0)) if timings else 0.0,
             total_ui_ms,
             buffer_ms,
@@ -504,6 +522,16 @@ class SimulatorSimulation:
 
     def _update_heatmap_from_simulation(self):
         """根据仿真结果更新热力图（全 montage 频带功率）"""
+        current_band = self._sim.signal_page.get_heatmap_band()
+        if (
+            self._latest_heatmap_result is not None
+            and self._latest_heatmap_result.get('band') == current_band
+        ):
+            self._sim.signal_page.update_heatmap_result(self._latest_heatmap_result)
+            return
+        if self._latest_heatmap_result is not None and self._sim._mne_simulator is not None:
+            return
+
         time_window = min(
             self._sim.signal_page.time_window_spin.value(),
             getattr(self._sim, 'heatmap_analysis_window', 2.0),
