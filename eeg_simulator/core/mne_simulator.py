@@ -74,17 +74,102 @@ class MNESimulator:
     def _build_source_mapping(self):
         """构建源点到顶点索引的映射"""
         self.vert_to_source_idx = {'lh': {}, 'rh': {}}
+        self._flat_vert_to_source_idx = {}
         
         # 正向模型中的源点顺序
         source_idx = 0
         for hemi_idx, s in enumerate(self.src_space):
             hemi = 'lh' if hemi_idx == 0 else 'rh'
             for vertno in s['vertno']:
+                vertno = int(vertno)
                 self.vert_to_source_idx[hemi][vertno] = source_idx
+                self._flat_vert_to_source_idx[(hemi, vertno)] = source_idx
                 source_idx += 1
+        self._mapped_source_count = source_idx
                 
         logger.info(f"源点映射构建完成: LH={len(self.vert_to_source_idx['lh'])}, "
                    f"RH={len(self.vert_to_source_idx['rh'])}")
+
+    def _project_patch_data_direct(self, patch_data: Dict, n_samples: int) -> Optional[Dict[str, np.ndarray]]:
+        """仅投影活跃 dipole 对应的 forward 列，避免实时循环中构造完整 SourceEstimate。"""
+        if (
+            self.forward_op is None
+            or self.forward_op.shape[1] != getattr(self, '_mapped_source_count', -1)
+        ):
+            return None
+
+        sensor_data = np.zeros((len(self.ch_names), n_samples), dtype=float)
+        total_dipoles = 0
+        matched_dipoles = 0
+        unmatched_dipoles = []
+        snapped_dipoles = []
+
+        for patch_id, data in patch_data.items():
+            signals = np.asarray(data.get('signals', np.zeros(n_samples)), dtype=float)
+            if signals.size != n_samples:
+                fixed = np.zeros(n_samples, dtype=float)
+                take = min(signals.size, n_samples)
+                if take > 0:
+                    fixed[:take] = signals[:take]
+                signals = fixed
+            dipoles = data.get('dipoles', [])
+            patch_amp_scale = data.get('amplitude_scale', 1e-9)
+
+            for dipole in dipoles:
+                total_dipoles += 1
+                dipole_id = getattr(dipole, 'id', '?')
+                resolved = self._resolve_dipole_vertex(dipole, self._flat_vert_to_source_idx)
+                if resolved is None:
+                    unmatched_dipoles.append({
+                        'patch_id': patch_id,
+                        'dipole_id': dipole_id,
+                        'hemi': getattr(dipole, 'hemi', None),
+                        'vertno': getattr(dipole, 'vertno', None),
+                    })
+                    continue
+
+                hemi, vertno = resolved['key']
+                if resolved.get('snapped'):
+                    original_key = resolved.get('original_key')
+                    from_hemi, from_vertno = (
+                        original_key if original_key is not None else
+                        (getattr(dipole, 'hemi', None), getattr(dipole, 'vertno', None))
+                    )
+                    snapped_dipoles.append({
+                        'patch_id': patch_id,
+                        'dipole_id': dipole_id,
+                        'from_hemi': from_hemi,
+                        'from_vertno': from_vertno,
+                        'to_hemi': hemi,
+                        'to_vertno': vertno,
+                        'distance_m': resolved.get('distance_m', 0.0),
+                    })
+
+                source_idx = self._flat_vert_to_source_idx.get((hemi, int(vertno)))
+                if source_idx is None:
+                    unmatched_dipoles.append({
+                        'patch_id': patch_id,
+                        'dipole_id': dipole_id,
+                        'hemi': hemi,
+                        'vertno': vertno,
+                    })
+                    continue
+
+                matched_dipoles += 1
+                amplitude = getattr(dipole, 'amplitude', 1.0)
+                source_signal = signals * amplitude * patch_amp_scale
+                sensor_data += self.forward_op[:, source_idx:source_idx + 1] * source_signal[np.newaxis, :]
+
+        if total_dipoles > 0 and unmatched_dipoles:
+            self._log_unmatched_dipoles(matched_dipoles, total_dipoles, unmatched_dipoles)
+        if snapped_dipoles:
+            self._log_snapped_dipoles(snapped_dipoles)
+
+        return {
+            ch_name: sensor_data[i, :]
+            for i, ch_name in enumerate(self.ch_names)
+            if i < sensor_data.shape[0]
+        }
 
     def _get_loaded_src_verts(self):
         """UI 加载的源空间顶点集合，用于诊断与前向模型不一致"""
@@ -417,6 +502,14 @@ class MNESimulator:
             (ch_names, sensor_data) 元组，其中 sensor_data 形状为 (n_channels, n_times)
         """
         try:
+            if (
+                self.forward_op is not None
+                and getattr(stc, 'data', None) is not None
+                and self.forward_op.shape[1] == stc.data.shape[0]
+            ):
+                sensor_data = self.forward_op @ stc.data
+                return self.ch_names, sensor_data
+
             from mne import apply_forward
 
             with warnings.catch_warnings():
@@ -450,6 +543,10 @@ class MNESimulator:
         Returns:
             {channel_name: signal_array}
         """
+        direct = self._project_patch_data_direct(patch_data, n_samples)
+        if direct is not None:
+            return direct
+
         # 1. 生成 SourceEstimate
         stc = self.generate_source_estimate(patch_data, start_time, n_samples)
         if stc is None:

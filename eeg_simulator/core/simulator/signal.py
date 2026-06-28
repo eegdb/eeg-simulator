@@ -29,6 +29,7 @@ class SimulatorSignal:
         self._sim = simulator
         self._heatmap_forward_cache_key = None
         self._heatmap_forward_series = None
+        self._analysis_filter_cache = {}
 
     def _generate_patch_signals_batch(self, t, n_samples):
         """批量生成Patch信号 - 保持相位连续性"""
@@ -171,14 +172,16 @@ class SimulatorSignal:
             }
         return patch_data
 
-    def _project_to_electrodes_batch(self, patch_signals, n_samples):
+    def _project_to_electrodes_batch(self, patch_signals, n_samples, start_time=None):
         """批量投影到电极"""
         if self._sim._mne_simulator is not None and self._sim._mne_simulator.is_ready():
             patch_data = self._build_patch_data(patch_signals, n_samples)
 
             try:
                 all_data = self._sim._mne_simulator.simulate(
-                    patch_data, self._sim.simulation_time, n_samples
+                    patch_data,
+                    self._sim.simulation_time if start_time is None else start_time,
+                    n_samples,
                 )
                 # 只返回选中的通道，使用通道名称映射
                 eeg_data = {}
@@ -373,11 +376,17 @@ class SimulatorSignal:
     def _update_buffers_batch(self, t, patch_signals, eeg_data, n_samples):
         """批量更新缓冲区 - 对新数据实时滤波后再存入"""
         self.invalidate_heatmap_forward_cache()
+        take = min(n_samples, self._sim.buffer_size)
+
         # 更新时间缓冲区
-        self._sim.time_buffer = np.roll(self._sim.time_buffer, -n_samples)
-        self._sim.time_buffer[-n_samples:] = t
+        if take >= self._sim.buffer_size:
+            self._sim.time_buffer[:] = t[-self._sim.buffer_size:]
+        else:
+            self._sim.time_buffer[:-take] = self._sim.time_buffer[take:]
+            self._sim.time_buffer[-take:] = t[-take:]
 
         # 更新EEG缓冲区 - 只对新数据进行滤波
+        output_batch = {}
         for ch_name, signal in eeg_data.items():
             if ch_name not in self._sim.eeg_buffer:
                 self._sim.eeg_buffer[ch_name] = np.zeros(self._sim.buffer_size)
@@ -390,17 +399,17 @@ class SimulatorSignal:
                 signal_uV = self._apply_filter(signal_uV, ch_name)
 
             # 存入缓冲区
-            self._sim.eeg_buffer[ch_name] = np.roll(self._sim.eeg_buffer[ch_name], -n_samples)
-            self._sim.eeg_buffer[ch_name][-n_samples:] = signal_uV
+            if take >= self._sim.buffer_size:
+                self._sim.eeg_buffer[ch_name][:] = signal_uV[-self._sim.buffer_size:]
+            else:
+                buf = self._sim.eeg_buffer[ch_name]
+                buf[:-take] = buf[take:]
+                buf[-take:] = signal_uV[-take:]
+            if ch_name in self._sim.selected_channels:
+                output_batch[ch_name] = signal_uV.copy()
 
-        if self._sim._output_sink and n_samples > 0:
-            batch = {
-                ch: self._sim.eeg_buffer[ch][-n_samples:].copy()
-                for ch in self._sim.selected_channels
-                if ch in self._sim.eeg_buffer
-            }
-            if batch:
-                self._sim._output_sink.write_batch(batch)
+        if self._sim._output_sink and output_batch:
+            self._sim._output_sink.write_batch(output_batch)
 
     def _init_filter_states(self):
         """初始化实时滤波状态和系数
@@ -573,7 +582,8 @@ class SimulatorSignal:
                 return
 
             # 获取数据
-            data = self._sim.eeg_buffer[fft_channel][-n_samples:]
+            fft_samples = min(n_samples, 2048)
+            data = self._sim.eeg_buffer[fft_channel][-fft_samples:]
             if len(data) < 256:  # 需要足够的数据点
                 return
 
@@ -597,15 +607,13 @@ class SimulatorSignal:
     @staticmethod
     def _compute_channel_psd(data: np.ndarray, sampling_rate: float):
         """计算单通道加窗功率谱密度"""
-        from scipy import fft
-
         data = np.asarray(data, dtype=float)
         window = np.hamming(len(data))
         data_windowed = data * window
-        fft_vals = fft.fft(data_windowed)
         n = len(data)
-        fft_power = np.abs(fft_vals[: n // 2]) ** 2 / max(n, 1)
-        freqs = fft.fftfreq(n, 1.0 / sampling_rate)[: n // 2]
+        fft_vals = np.fft.rfft(data_windowed)
+        fft_power = np.abs(fft_vals) ** 2 / max(n, 1)
+        freqs = np.fft.rfftfreq(n, 1.0 / sampling_rate)
         return freqs, fft_power
 
     @staticmethod
@@ -719,10 +727,14 @@ class SimulatorSignal:
             return np.zeros_like(data)
         low = fmin / nyquist
         high = fmax / nyquist
-        if high >= 1.0:
-            sos = sp_signal.butter(4, low, btype='highpass', output='sos')
-        else:
-            sos = sp_signal.butter(4, [low, high], btype='bandpass', output='sos')
+        cache_key = (round(float(sr), 6), round(float(fmin), 6), None if fmax is None else round(float(fmax), 6))
+        sos = self._analysis_filter_cache.get(cache_key)
+        if sos is None:
+            if high >= 1.0:
+                sos = sp_signal.butter(4, low, btype='highpass', output='sos')
+            else:
+                sos = sp_signal.butter(4, [low, high], btype='bandpass', output='sos')
+            self._analysis_filter_cache[cache_key] = sos
         return sp_signal.sosfiltfilt(sos, data)
 
     def _total_power_from_uV_series(self, series_uV: np.ndarray) -> float:
@@ -781,38 +793,11 @@ class SimulatorSignal:
         有前向模型时优先使用其原生 EEG 电极位置，避免 10-10 名称
         重映射到稀疏传感器造成的左右假不对称。
         """
-        import mne
-
         band_key = self._sim.signal_page.get_heatmap_band()
         fmin, fmax = self._resolve_heatmap_band(band_key)
         sr = self._sim.sampling_rate
         min_samples = max(64, int(sr * 0.5))
         n_samples = int(min(max(n_samples, min_samples), self._sim.buffer_size))
-
-        forward_series = self._get_forward_series_for_heatmap(n_samples)
-        if forward_series and self._sim._mne_simulator is not None:
-            info = self._sim._mne_simulator.info
-            picks = mne.pick_types(info, meg=False, eeg=True, exclude=[])
-            powers = []
-            broadband = []
-            for pick in picks:
-                name = info['ch_names'][pick]
-                if name in forward_series:
-                    series_uV = np.asarray(forward_series[name], dtype=float) * 1e6
-                    series_uV = self._filter_window_offline(series_uV)
-                    powers.append(self._band_power_from_filtered_uV_series(series_uV, sr, fmin, fmax))
-                    broadband.append(self._total_power_from_uV_series(series_uV))
-                else:
-                    powers.append(0.0)
-                    broadband.append(0.0)
-            powers = np.asarray(powers, dtype=float)
-            return self._normalize_heatmap_powers(
-                powers,
-                band_key,
-                mode='forward',
-                info=info,
-                broadband=np.asarray(broadband, dtype=float),
-            )
 
         montage = None
         if hasattr(self._sim, 'electrode_channels_page'):

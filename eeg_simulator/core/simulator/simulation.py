@@ -1,6 +1,7 @@
 """仿真启停、主循环与输出 sink。"""
 
 import time
+from collections import deque
 
 import numpy as np
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
@@ -29,23 +30,36 @@ class SimulationWorker(QObject):
     @pyqtSlot(float, int)
     def generate_batch(self, t_start: float, n_samples: int):
         try:
+            timings = {}
+            t0 = time.perf_counter()
             dt = 1.0 / self._sim.sampling_rate
             t_end = t_start + n_samples * dt
             t = np.linspace(t_start, t_end, n_samples, endpoint=False)
 
+            section = time.perf_counter()
             patch_signals = self._sim.signal._generate_patch_signals_batch(t, n_samples)
             patch_signals = self._sim.signal._apply_coupling_batch(patch_signals, t, n_samples)
-            eeg_data = self._sim.signal._project_to_electrodes_batch(patch_signals, n_samples)
+            timings['source_ms'] = (time.perf_counter() - section) * 1000.0
+
+            section = time.perf_counter()
+            eeg_data = self._sim.signal._project_to_electrodes_batch(
+                patch_signals, n_samples, start_time=t_start
+            )
+            timings['project_ms'] = (time.perf_counter() - section) * 1000.0
 
             if self._sim.noise_configs:
+                section = time.perf_counter()
                 eeg_data = self._sim.signal._add_noise_batch(eeg_data, t, n_samples)
+                timings['noise_ms'] = (time.perf_counter() - section) * 1000.0
 
+            timings['worker_total_ms'] = (time.perf_counter() - t0) * 1000.0
             self.batch_ready.emit({
                 't': t,
                 't_end': t_end,
                 'n_samples': n_samples,
                 'patch_signals': patch_signals,
                 'eeg_data': eeg_data,
+                'timings': timings,
             })
         except Exception as e:
             logger.error(f"后台生成数据失败: {e}", exc_info=True)
@@ -60,6 +74,11 @@ class SimulatorSimulation:
         self._worker_thread = None
         self._worker = None
         self._worker_busy = False
+        self._pending_batches = deque()
+        self._generated_until = 0.0
+        self._chunk_seconds = 1.0
+        self._prefill_seconds = 1.5
+        self._max_queue_seconds = 3.0
 
     def _start_worker(self):
         self._stop_worker()
@@ -74,11 +93,71 @@ class SimulatorSimulation:
 
     def _stop_worker(self):
         self._worker_busy = False
+        self._pending_batches.clear()
         if self._worker_thread is not None:
             self._worker_thread.quit()
             self._worker_thread.wait()
         self._worker = None
         self._worker_thread = None
+
+    def _queued_seconds(self) -> float:
+        return max(0.0, self._generated_until - self._sim.simulation_time)
+
+    def _request_generation_if_needed(self, target_time: float | None = None):
+        if self._worker is None or self._worker_busy:
+            return
+
+        target_time = self._sim.simulation_time if target_time is None else target_time
+        queued = self._generated_until - self._sim.simulation_time
+        if queued >= self._prefill_seconds:
+            return
+        if queued >= self._max_queue_seconds:
+            return
+
+        t_start = max(self._generated_until, self._sim.simulation_time)
+        if target_time > t_start + self._max_queue_seconds:
+            t_start = self._generated_until
+        n_samples = max(1, int(round(self._chunk_seconds * self._sim.sampling_rate)))
+        self._worker_busy = True
+        self._worker.request_generate.emit(t_start, n_samples)
+
+    def _pop_generated_samples(self, n_samples: int) -> tuple[np.ndarray, dict]:
+        if n_samples <= 0 or not self._pending_batches:
+            return np.array([]), {}
+
+        t_parts = []
+        channel_parts = {}
+        remaining = n_samples
+
+        while remaining > 0 and self._pending_batches:
+            batch = self._pending_batches[0]
+            pos = int(batch.get('pos', 0))
+            total = int(batch['n_samples'])
+            available = total - pos
+            if available <= 0:
+                self._pending_batches.popleft()
+                continue
+
+            take = min(remaining, available)
+            end = pos + take
+            t_parts.append(batch['t'][pos:end])
+            for ch_name, data in batch['eeg_data'].items():
+                channel_parts.setdefault(ch_name, []).append(data[pos:end])
+
+            batch['pos'] = end
+            remaining -= take
+            if end >= total:
+                self._pending_batches.popleft()
+
+        if not t_parts:
+            return np.array([]), {}
+
+        t = np.concatenate(t_parts) if len(t_parts) > 1 else t_parts[0]
+        eeg_data = {
+            ch_name: np.concatenate(parts) if len(parts) > 1 else parts[0]
+            for ch_name, parts in channel_parts.items()
+        }
+        return t, eeg_data
 
     def start_simulation(self):
         """开始仿真。成功返回 True，校验失败返回 False。"""
@@ -116,6 +195,8 @@ class SimulatorSimulation:
         self._sim.simulation_time = 0.0
         self._sim._run_start_time = time.time()
         self._sim._last_update_time = None
+        self._pending_batches.clear()
+        self._generated_until = 0.0
 
         # 重置信号生成状态，确保从初始相位开始
         self._sim._signal_states.clear()
@@ -150,9 +231,11 @@ class SimulatorSimulation:
         self._sim.signal_page.update_plots(self._sim.selected_channels)
         self._update_plots()
         self._start_worker()
+        self._request_generation_if_needed(self._prefill_seconds)
 
         # 启动定时器
-        update_interval = int(1000 / 30)  # 30fps
+        update_hz = max(5, int(getattr(self._sim, '_simulation_update_hz', 20)))
+        update_interval = int(1000 / update_hz)
         self._sim.timer.start(update_interval)
         self._sim.status_timer.start(1000)
 
@@ -197,22 +280,54 @@ class SimulatorSimulation:
             current_time = time.time()
             self._sim._last_update_time = current_time
 
-            # 计算样本数
+            update_hz = max(5, int(getattr(self._sim, '_simulation_update_hz', 20)))
             target_time = max(
                 0.0,
                 current_time - getattr(self._sim, '_run_time_origin', current_time),
             )
-            backlog = max(0.0, target_time - self._sim.simulation_time)
-            step_time = min(max(backlog, 1.0 / 30), 0.25)
-            n_samples = int(round(step_time * self._sim.sampling_rate))
+            n_samples = max(1, int(round(self._sim.sampling_rate / update_hz)))
             if n_samples <= 0:
                 return
 
-            t_start = self._sim.simulation_time
-            if self._worker is None or self._worker_busy:
+            self._request_generation_if_needed(target_time)
+            if not self._pending_batches:
                 return
-            self._worker_busy = True
-            self._worker.request_generate.emit(t_start, n_samples)
+
+            t, eeg_data = self._pop_generated_samples(n_samples)
+            if t.size == 0 or not eeg_data:
+                return
+
+            ui_t0 = time.perf_counter()
+            consumed = int(t.size)
+            section = time.perf_counter()
+            self._sim.signal._update_buffers_batch(t, {}, eeg_data, consumed)
+            buffer_ms = (time.perf_counter() - section) * 1000.0
+            self._sim.simulation_time = float(t[-1] + 1.0 / self._sim.sampling_rate)
+
+            plot_ms = 0.0
+            if (self._sim.simulation_time - self._sim._last_waveform_update_time
+                    >= self._sim._waveform_update_interval):
+                section = time.perf_counter()
+                self._update_plots()
+                plot_ms = (time.perf_counter() - section) * 1000.0
+                self._sim._last_waveform_update_time = self._sim.simulation_time
+
+            heatmap_ms = 0.0
+            if (QApplication.activeModalWidget() is None
+                    and self._sim.signal_page.is_heatmap_enabled()
+                    and self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval):
+                section = time.perf_counter()
+                self._update_heatmap_from_simulation()
+                heatmap_ms = (time.perf_counter() - section) * 1000.0
+                self._sim._last_heatmap_update_time = self._sim.simulation_time
+
+            total_ui_ms = (time.perf_counter() - ui_t0) * 1000.0
+            self._log_realtime_perf(consumed, {}, total_ui_ms, buffer_ms, plot_ms, heatmap_ms)
+
+            duration_limit = self._sim.output_page.get_output_config().get('duration', 0)
+            if duration_limit > 0 and self._sim.simulation_time >= duration_limit:
+                logger.info(f"达到设定时长 {duration_limit}s，自动停止仿真")
+                self.stop_simulation()
         except Exception as e:
             logger.error(f"仿真更新失败: {e}", exc_info=True)
             self.stop_simulation()
@@ -224,28 +339,17 @@ class SimulatorSimulation:
             return
 
         try:
-            t = batch['t']
-            patch_signals = batch['patch_signals']
-            eeg_data = batch['eeg_data']
-            n_samples = int(batch['n_samples'])
-            self._sim.signal._update_buffers_batch(t, patch_signals, eeg_data, n_samples)
-            self._sim.simulation_time = float(batch['t_end'])
-
-            if (self._sim.simulation_time - self._sim._last_waveform_update_time
-                    >= self._sim._waveform_update_interval):
-                self._update_plots()
-                self._sim._last_waveform_update_time = self._sim.simulation_time
-
-            if (QApplication.activeModalWidget() is None
-                    and self._sim.signal_page.is_heatmap_enabled()
-                    and self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval):
-                self._update_heatmap_from_simulation()
-                self._sim._last_heatmap_update_time = self._sim.simulation_time
-
-            duration_limit = self._sim.output_page.get_output_config().get('duration', 0)
-            if duration_limit > 0 and self._sim.simulation_time >= duration_limit:
-                logger.info(f"达到设定时长 {duration_limit}s，自动停止仿真")
-                self.stop_simulation()
+            batch['pos'] = 0
+            self._pending_batches.append(batch)
+            self._generated_until = max(self._generated_until, float(batch['t_end']))
+            self._log_realtime_perf(
+                int(batch['n_samples']),
+                batch.get('timings') or {},
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            )
         except Exception as e:
             logger.error(f"处理后台数据失败: {e}", exc_info=True)
             self.stop_simulation()
@@ -253,6 +357,32 @@ class SimulatorSimulation:
 
         finally:
             self._worker_busy = False
+            if self._sim.is_running:
+                self._request_generation_if_needed()
+
+    def _log_realtime_perf(self, n_samples, timings, total_ui_ms, buffer_ms, plot_ms, heatmap_ms):
+        worker_ms = float(timings.get('worker_total_ms', 0.0)) if timings else 0.0
+        if worker_ms <= 35.0 and total_ui_ms <= 25.0 and heatmap_ms <= 40.0:
+            return
+        now = time.time()
+        last_log = getattr(self._sim, '_last_perf_log_time', 0.0)
+        if now - last_log < 2.0:
+            return
+        self._sim._last_perf_log_time = now
+        logger.info(
+            "实时性能: samples=%d queued=%.2fs worker=%.1fms(source=%.1f project=%.1f noise=%.1f) "
+            "ui=%.1fms(buffer=%.1f plot=%.1f heatmap=%.1f)",
+            n_samples,
+            self._queued_seconds(),
+            worker_ms,
+            float(timings.get('source_ms', 0.0)) if timings else 0.0,
+            float(timings.get('project_ms', 0.0)) if timings else 0.0,
+            float(timings.get('noise_ms', 0.0)) if timings else 0.0,
+            total_ui_ms,
+            buffer_ms,
+            plot_ms,
+            heatmap_ms,
+        )
 
     def _on_worker_failed(self, message: str):
         self._worker_busy = False
@@ -353,12 +483,16 @@ class SimulatorSimulation:
         time_window = self._sim.signal_page.time_window_spin.value()
         n_samples = int(time_window * self._sim.sampling_rate)
 
-        t_display = self._sim.time_buffer[-n_samples:] if len(self._sim.time_buffer) >= n_samples else self._sim.time_buffer
+        max_points = max(200, int(getattr(self._sim, '_waveform_display_max_points', 1200)))
+        stride = max(1, int(np.ceil(n_samples / max_points)))
+        t_window = self._sim.time_buffer[-n_samples:] if len(self._sim.time_buffer) >= n_samples else self._sim.time_buffer
+        t_display = t_window[::stride]
 
         channel_data = {}
         for ch_name in self._sim.selected_channels:
             if ch_name in self._sim.eeg_buffer and ch_name in self._sim.signal_page.plot_curves:
-                channel_data[ch_name] = self._sim.eeg_buffer[ch_name][-n_samples:].copy()
+                data_window = self._sim.eeg_buffer[ch_name][-n_samples:]
+                channel_data[ch_name] = data_window[::stride]
         if channel_data:
             self._sim.signal_page.update_waveform_plots(t_display, channel_data)
 

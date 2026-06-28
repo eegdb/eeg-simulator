@@ -75,7 +75,8 @@ class EEGSimulator(QMainWindow):
         self.simulation_time = 0.0
         self.is_running = False
         self.buffer_size = 5000
-        self.samples_per_update = max(1, int(self.sampling_rate / 30))
+        self._simulation_update_hz = 20
+        self.samples_per_update = max(1, int(self.sampling_rate / self._simulation_update_hz))
 
         self._signal_states = {}
         self._last_heatmap_update_time = 0.0
@@ -96,7 +97,8 @@ class EEGSimulator(QMainWindow):
         self._last_fft_update_time = 0.0
         self._fft_update_interval = 0.5
         self._last_waveform_update_time = 0.0
-        self._waveform_update_interval = 1.0 / 15.0
+        self._waveform_update_interval = 1.0 / 10.0
+        self._waveform_display_max_points = 1200
         self.heatmap_analysis_window = 2.0
 
         self.selected_channels = []

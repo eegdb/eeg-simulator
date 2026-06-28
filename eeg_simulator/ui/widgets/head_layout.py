@@ -167,7 +167,7 @@ class HeatmapOverlayWidget(QWidget):
                 vlim=(0, 1),
                 outlines='head',
                 extrapolate='head',
-                res=128,
+                res=64,
             )
             
             fig.patch.set_alpha(1.0)
@@ -235,7 +235,7 @@ class HeatmapOverlayWidget(QWidget):
                 vlim=(0, 1),
                 outlines='head',
                 extrapolate='head',
-                res=128,
+                res=64,
             )
 
             fig.patch.set_alpha(1.0)

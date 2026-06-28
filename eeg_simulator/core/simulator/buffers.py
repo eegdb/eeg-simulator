@@ -23,7 +23,8 @@ class SimulatorBuffers:
     def sync_engines_sampling_rate(self):
         """将各引擎采样率与 self._sim.sampling_rate 同步"""
         sr = self._sim.sampling_rate
-        self._sim.samples_per_update = max(1, int(sr / 30))
+        update_hz = getattr(self._sim, '_simulation_update_hz', 20)
+        self._sim.samples_per_update = max(1, int(sr / update_hz))
         self._sim.signal_engine.sampling_rate = sr
         self._sim._coupling_engine.set_sampling_rate(sr)
         for coupling in self._sim._coupling_models.values():

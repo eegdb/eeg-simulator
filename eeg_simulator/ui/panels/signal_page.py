@@ -146,6 +146,7 @@ class SignalPage(NavigationPage):
         
         self.plot_items = {}
         self.plot_curves = {}
+        self._waveform_x_range_plot = None
         
         self._setup_content()
     
@@ -353,6 +354,7 @@ class SignalPage(NavigationPage):
         self.plot_widget.clear()
         self.plot_items.clear()
         self.plot_curves.clear()
+        self._waveform_x_range_plot = None
         
         if not channels:
             # 显示提示信息
@@ -374,9 +376,15 @@ class SignalPage(NavigationPage):
         
         # 为每个通道创建子图
         n_channels = len(channels)
+        first_plot = None
         for i, ch_name in enumerate(channels):
             # 使用支持滚轮缩放的 PlotItem
             plot = create_zoomable_plot(self.plot_widget, row=i, col=0)
+            if first_plot is None:
+                first_plot = plot
+                self._waveform_x_range_plot = plot
+            else:
+                plot.setXLink(first_plot)
             
             # 设置 ViewBox 背景色
             plot.getViewBox().setBackgroundColor(get_color('bg_card'))
@@ -398,6 +406,8 @@ class SignalPage(NavigationPage):
             # 创建曲线
             pen = pg.mkPen(color=get_color('accent'), width=1.5)
             curve = plot.plot(pen=pen)
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method='peak')
             
             self.plot_items[ch_name] = plot
             self.plot_curves[ch_name] = curve
@@ -473,16 +483,17 @@ class SignalPage(NavigationPage):
         elif len(t_display) == 1:
             x_range = (float(t_display[0]) - 0.5, float(t_display[0]) + 0.5)
 
+        if x_range is not None and self._waveform_x_range_plot is not None:
+            self._waveform_x_range_plot.setXRange(x_range[0], x_range[1], padding=0)
+
         for ch_name, data in channel_data.items():
             curve = self.plot_curves.get(ch_name)
             if curve is None:
                 continue
-            curve.setData(t_display, data)
+            curve.setData(t_display, data, skipFiniteCheck=True)
             plot = self.plot_items.get(ch_name)
             if plot is None or len(data) == 0:
                 continue
-            if x_range is not None:
-                plot.setXRange(x_range[0], x_range[1], padding=0)
             if not self.is_waveform_autoscale():
                 continue
             self._set_y_range_from_data(plot, data)
@@ -608,7 +619,6 @@ class SignalPage(NavigationPage):
             self.heatmap_widget.update_heatmap(
                 result.get('powers'), result.get('names')
             )
-        self.heatmap_widget.repaint()
     
     def clear_heatmap(self):
         """清除热力图"""
