@@ -64,6 +64,7 @@ class SimulatorSimulation:
         # 重置耦合延迟缓冲
         self._sim._coupling_engine.reset_histories()
         self._sim._last_fft_update_time = 0.0
+        self._sim._last_waveform_update_time = 0.0
         self._sim._last_heatmap_update_time = -self._sim.heatmap_refresh_interval
 
         # 确保热力图 montage 与当前电极布局一致
@@ -81,6 +82,7 @@ class SimulatorSimulation:
         # 初始化实时滤波状态，并预热显示缓冲区
         self._sim.signal._init_filter_states()
         self._sim.signal.warm_up_display_buffer()
+        self._sim._run_time_origin = time.time() - self._sim.simulation_time
 
         # 初始化图表并立即绘制预热后的数据
         self._sim.signal_page.update_plots(self._sim.selected_channels)
@@ -145,7 +147,13 @@ class SimulatorSimulation:
             dt = 1.0 / self._sim.sampling_rate
 
             # 计算样本数
-            n_samples = int(elapsed * self._sim.sampling_rate)
+            target_time = max(
+                0.0,
+                current_time - getattr(self._sim, '_run_time_origin', current_time),
+            )
+            backlog = max(0.0, target_time - self._sim.simulation_time)
+            step_time = min(max(backlog, 1.0 / 30), 0.25)
+            n_samples = int(round(step_time * self._sim.sampling_rate))
             if n_samples <= 0:
                 return
 
@@ -169,9 +177,13 @@ class SimulatorSimulation:
 
             # 更新缓冲区
             self._sim.signal._update_buffers_batch(t, patch_signals, eeg_data, n_samples)
+            self._sim.simulation_time = t_end
 
             # 更新图表
-            self._update_plots()
+            if (self._sim.simulation_time - self._sim._last_waveform_update_time
+                    >= self._sim._waveform_update_interval):
+                self._update_plots()
+                self._sim._last_waveform_update_time = self._sim.simulation_time
 
             # 更新热力图（模态对话框打开时跳过，避免干扰输入焦点）
             if (QApplication.activeModalWidget() is None
@@ -179,9 +191,6 @@ class SimulatorSimulation:
                     and self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval):
                 self._update_heatmap_from_simulation()
                 self._sim._last_heatmap_update_time = self._sim.simulation_time
-
-            # 更新时间
-            self._sim.simulation_time = t_end
 
             # 限时自动停止
             duration_limit = self._sim.output_page.get_output_config().get('duration', 0)
@@ -303,7 +312,10 @@ class SimulatorSimulation:
 
     def _update_heatmap_from_simulation(self):
         """根据仿真结果更新热力图（全 montage 频带功率）"""
-        time_window = self._sim.signal_page.time_window_spin.value()
+        time_window = min(
+            self._sim.signal_page.time_window_spin.value(),
+            getattr(self._sim, 'heatmap_analysis_window', 2.0),
+        )
         n_samples = int(time_window * self._sim.sampling_rate)
         result = self._sim.signal.compute_heatmap_band_powers_for_topomap(n_samples)
         powers = result.get('powers')

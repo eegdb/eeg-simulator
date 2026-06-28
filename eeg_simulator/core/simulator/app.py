@@ -95,6 +95,9 @@ class EEGSimulator(QMainWindow):
         self._mne_coupling_factor_cache_key = None
         self._last_fft_update_time = 0.0
         self._fft_update_interval = 0.5
+        self._last_waveform_update_time = 0.0
+        self._waveform_update_interval = 1.0 / 15.0
+        self.heatmap_analysis_window = 2.0
 
         self.selected_channels = []
         self._saved_electrode_montage = None

@@ -467,6 +467,12 @@ class SignalPage(NavigationPage):
 
     def update_waveform_plots(self, t_display, channel_data: dict):
         """更新各通道波形；开启自动占满时按数据动态缩放 Y 轴"""
+        x_range = None
+        if len(t_display) > 1:
+            x_range = (float(t_display[0]), float(t_display[-1]))
+        elif len(t_display) == 1:
+            x_range = (float(t_display[0]) - 0.5, float(t_display[0]) + 0.5)
+
         for ch_name, data in channel_data.items():
             curve = self.plot_curves.get(ch_name)
             if curve is None:
@@ -475,10 +481,8 @@ class SignalPage(NavigationPage):
             plot = self.plot_items.get(ch_name)
             if plot is None or len(data) == 0:
                 continue
-            if len(t_display) > 1:
-                plot.setXRange(float(t_display[0]), float(t_display[-1]), padding=0)
-            elif len(t_display) == 1:
-                plot.setXRange(float(t_display[0]) - 0.5, float(t_display[0]) + 0.5, padding=0)
+            if x_range is not None:
+                plot.setXRange(x_range[0], x_range[1], padding=0)
             if not self.is_waveform_autoscale():
                 continue
             self._set_y_range_from_data(plot, data)
