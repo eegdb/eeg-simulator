@@ -3,6 +3,7 @@
 import time
 
 import numpy as np
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from ...ui.styles import COLORS
@@ -12,11 +13,72 @@ from ..output_sink import SimulationOutputSink, OutputSinkError
 logger = get_logger(__name__)
 
 
+class SimulationWorker(QObject):
+    request_generate = pyqtSignal(float, int)
+    batch_ready = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, simulator):
+        super().__init__()
+        self._sim = simulator
+        self.request_generate.connect(
+            self.generate_batch,
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+    @pyqtSlot(float, int)
+    def generate_batch(self, t_start: float, n_samples: int):
+        try:
+            dt = 1.0 / self._sim.sampling_rate
+            t_end = t_start + n_samples * dt
+            t = np.linspace(t_start, t_end, n_samples, endpoint=False)
+
+            patch_signals = self._sim.signal._generate_patch_signals_batch(t, n_samples)
+            patch_signals = self._sim.signal._apply_coupling_batch(patch_signals, t, n_samples)
+            eeg_data = self._sim.signal._project_to_electrodes_batch(patch_signals, n_samples)
+
+            if self._sim.noise_configs:
+                eeg_data = self._sim.signal._add_noise_batch(eeg_data, t, n_samples)
+
+            self.batch_ready.emit({
+                't': t,
+                't_end': t_end,
+                'n_samples': n_samples,
+                'patch_signals': patch_signals,
+                'eeg_data': eeg_data,
+            })
+        except Exception as e:
+            logger.error(f"后台生成数据失败: {e}", exc_info=True)
+            self.failed.emit(str(e))
+
+
 class SimulatorSimulation:
     """SimulatorSimulation 服务。"""
 
     def __init__(self, simulator):
         self._sim = simulator
+        self._worker_thread = None
+        self._worker = None
+        self._worker_busy = False
+
+    def _start_worker(self):
+        self._stop_worker()
+        self._worker_busy = False
+        self._worker_thread = QThread(self._sim)
+        self._worker = SimulationWorker(self._sim)
+        self._worker.moveToThread(self._worker_thread)
+        self._worker_thread.finished.connect(self._worker.deleteLater)
+        self._worker.batch_ready.connect(self._on_worker_batch_ready)
+        self._worker.failed.connect(self._on_worker_failed)
+        self._worker_thread.start()
+
+    def _stop_worker(self):
+        self._worker_busy = False
+        if self._worker_thread is not None:
+            self._worker_thread.quit()
+            self._worker_thread.wait()
+        self._worker = None
+        self._worker_thread = None
 
     def start_simulation(self):
         """开始仿真。成功返回 True，校验失败返回 False。"""
@@ -87,6 +149,7 @@ class SimulatorSimulation:
         # 初始化图表并立即绘制预热后的数据
         self._sim.signal_page.update_plots(self._sim.selected_channels)
         self._update_plots()
+        self._start_worker()
 
         # 启动定时器
         update_interval = int(1000 / 30)  # 30fps
@@ -104,11 +167,11 @@ class SimulatorSimulation:
 
         logger.info("停止仿真")
 
-        self._close_output_sink()
-
         self._sim.is_running = False
         self._sim.timer.stop()
         self._sim.status_timer.stop()
+        self._stop_worker()
+        self._close_output_sink()
 
         # 清除信号生成状态，下次启动时重新初始化
         self._sim._signal_states.clear()
@@ -132,19 +195,7 @@ class SimulatorSimulation:
         try:
             # 计算时间
             current_time = time.time()
-            last_update = getattr(self._sim, '_last_update_time', None)
-
-            if last_update is None:
-                elapsed = 1.0 / 30
-            else:
-                elapsed = current_time - last_update
-
-            # 限制最大间隔
-            elapsed = min(elapsed, 0.1)
             self._sim._last_update_time = current_time
-
-            # 计算样本数
-            dt = 1.0 / self._sim.sampling_rate
 
             # 计算样本数
             target_time = max(
@@ -157,51 +208,58 @@ class SimulatorSimulation:
             if n_samples <= 0:
                 return
 
-            # 生成时间序列
             t_start = self._sim.simulation_time
-            t_end = t_start + n_samples * dt
-            t = np.linspace(t_start, t_end, n_samples, endpoint=False)
+            if self._worker is None or self._worker_busy:
+                return
+            self._worker_busy = True
+            self._worker.request_generate.emit(t_start, n_samples)
+        except Exception as e:
+            logger.error(f"仿真更新失败: {e}", exc_info=True)
+            self.stop_simulation()
+            QMessageBox.critical(self._sim, tr('error'), tr('msg_simulation_failed', str(e)))
 
-            # 生成各Patch信号
-            patch_signals = self._sim.signal._generate_patch_signals_batch(t, n_samples)
+    def _on_worker_batch_ready(self, batch: dict):
+        if not self._sim.is_running:
+            self._worker_busy = False
+            return
 
-            # 应用耦合
-            patch_signals = self._sim.signal._apply_coupling_batch(patch_signals, t, n_samples)
-
-            # 投影到电极
-            eeg_data = self._sim.signal._project_to_electrodes_batch(patch_signals, n_samples)
-
-            # 添加噪声
-            if self._sim.noise_configs:
-                eeg_data = self._sim.signal._add_noise_batch(eeg_data, t, n_samples)
-
-            # 更新缓冲区
+        try:
+            t = batch['t']
+            patch_signals = batch['patch_signals']
+            eeg_data = batch['eeg_data']
+            n_samples = int(batch['n_samples'])
             self._sim.signal._update_buffers_batch(t, patch_signals, eeg_data, n_samples)
-            self._sim.simulation_time = t_end
+            self._sim.simulation_time = float(batch['t_end'])
 
-            # 更新图表
             if (self._sim.simulation_time - self._sim._last_waveform_update_time
                     >= self._sim._waveform_update_interval):
                 self._update_plots()
                 self._sim._last_waveform_update_time = self._sim.simulation_time
 
-            # 更新热力图（模态对话框打开时跳过，避免干扰输入焦点）
             if (QApplication.activeModalWidget() is None
                     and self._sim.signal_page.is_heatmap_enabled()
                     and self._sim.simulation_time - self._sim._last_heatmap_update_time >= self._sim.heatmap_refresh_interval):
                 self._update_heatmap_from_simulation()
                 self._sim._last_heatmap_update_time = self._sim.simulation_time
 
-            # 限时自动停止
             duration_limit = self._sim.output_page.get_output_config().get('duration', 0)
             if duration_limit > 0 and self._sim.simulation_time >= duration_limit:
                 logger.info(f"达到设定时长 {duration_limit}s，自动停止仿真")
                 self.stop_simulation()
-
         except Exception as e:
-            logger.error(f"仿真更新失败: {e}", exc_info=True)
+            logger.error(f"处理后台数据失败: {e}", exc_info=True)
             self.stop_simulation()
             QMessageBox.critical(self._sim, tr('error'), tr('msg_simulation_failed', str(e)))
+
+        finally:
+            self._worker_busy = False
+
+    def _on_worker_failed(self, message: str):
+        self._worker_busy = False
+        if not self._sim.is_running:
+            return
+        self.stop_simulation()
+        QMessageBox.critical(self._sim, tr('error'), tr('msg_simulation_failed', message))
 
     def _validate_output_config(self, output_config: dict) -> bool:
         """校验输出目录、文件名等（EDF/FIFF 必填）"""

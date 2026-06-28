@@ -67,7 +67,7 @@ class SimulatorSignal:
                     current_signals, mne_factors
                 )
             elif self._sim._coupling_models:
-                current_time = self._sim.simulation_time + i * dt
+                current_time = t[i] if i < len(t) else self._sim.simulation_time + i * dt
                 current_signals = self._sim._coupling_engine.compute_coupled_signals(current_signals, current_time)
 
             for pid, signal in current_signals.items():
