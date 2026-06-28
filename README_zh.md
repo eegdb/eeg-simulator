@@ -5,90 +5,231 @@
 [![MNE](https://img.shields.io/badge/MNE-1.0+-orange.svg)](https://mne.tools/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-基于 **PyQt6** 和 **MNE-Python** 的脑电信号仿真平台，支持从真实大脑模型加载源空间，可视化选择信号源，配置偶极子、信号生成器和耦合模型，实现实时脑电信号仿真。
+EEG Simulator 是一个基于 **PyQt6** 和 **MNE-Python** 的桌面脑电仿真工具。它支持准备解剖模型、配置皮层信号源、设置电极与输出，并以实时方式查看波形、FFT 和头皮地形热力图。
 
-[English Documentation](README.md) · [详细界面文档](docs/README.md)
-
----
-
-## ✨ 功能特点
-
-| 功能 | 描述 |
-|------|------|
-| 🧠 **真实脑模型** | 加载 MNE 标准大脑模型（如 sample 数据集），支持 MRI 切片可视化 |
-| 🎯 **可视化源点选择** | 在 MRI 切片上手动选择，或按解剖标签（Atlas）批量选择信号源 |
-| 📊 **灵活的信号配置** | Patch 波形：正弦、余弦、ERP、高斯、Gamma、振荡包络、自定义 |
-| 🔗 **耦合模型** | 线性 / 非线性 / 延迟耦合；可选 MNE 几何权重 |
-| 🔊 **噪声管理** | 白、粉、1/f、布朗、工频(50/60Hz)、EOG、EMG、ECG，可叠加多实例 |
-| 📡 **实时与文件输出** | LSL 流式输出；EDF / FIF 文件导出，支持限时自动停止 |
-| 📈 **实时信号页** | 多通道波形、可选地形图热力图与 FFT、高通/低通/陷波滤波 |
-| 📁 **项目管理** | 保存/加载完整项目（Patch、耦合、噪声、滤波、布局、输出等） |
-| 🎨 **现代化 UI** | 深色/浅色主题，中英文界面 |
-| ⚙️ **BEM 模型** | 设置脑/颅骨/头皮导电率（可选 BEM 流程） |
+[English Documentation](README.md) | [详细界面文档](docs/README.md)
 
 ---
 
-## 📁 项目结构
+## 功能特性
 
-```
-EEG_Simulation/
-├── eeg_simulator/                 # 主程序包
-│   ├── core/                      # 仿真核心
-│   │   ├── simulator/             # 主仿真器（组合式服务模块）
-│   │   │   ├── app.py             # EEGSimulator 主类
-│   │   │   ├── simulation.py      # 启停与主循环
-│   │   │   ├── buffers.py         # 信号缓冲区
-│   │   │   └── ...                # UI / 项目 / MNE / Patch 等
-│   │   ├── simulator_nav.py       # 向后兼容 re-export
-│   │   ├── output_sink.py         # LSL / EDF / FIF 输出
-│   │   ├── signal_engine.py       # 信号生成引擎
-│   │   └── mne_simulator.py       # MNE 集成仿真器
-│   ├── models/                    # 数据模型
-│   │   ├── patch.py               # Patch 模型（偶极子组管理）
-│   │   ├── coupling.py            # 耦合模型
-│   │   ├── mne_coupling.py        # MNE 耦合引擎
-│   │   └── signal.py              # 信号生成器
-│   ├── ui/                        # 用户界面
-│   │   ├── styles.py              # QSS 样式
-│   │   ├── themes.py              # 主题管理（深色/浅色）
-│   │   ├── widgets/               # 基础控件
-│   │   ├── panels/                # 配置面板
-│   │   └── dialogs/               # 对话框
-│   ├── utils/                     # 工具模块
-│   │   ├── config_manager.py      # 配置管理（SQLite）
-│   │   ├── project_manager.py     # 项目管理
-│   │   ├── mne_loader.py          # MNE 数据加载与通道映射
-│   │   ├── waveform_parser.py     # 自定义波形安全解析
-│   │   ├── i18n.py                # 国际化
-│   │   └── logger.py              # 日志管理
-│   ├── __init__.py
-│   └── __main__.py                # 模块入口
-├── docs/                          # 界面与功能文档
-├── tests/                         # 测试模块
-├── main.py                        # 启动脚本
-├── requirements.txt               # 依赖列表
-├── README.md                      # 英文文档（默认）
-└── README_zh.md                   # 本文件（中文）
+| 模块 | 说明 |
+| --- | --- |
+| 模型准备 | 加载 MNE 源空间，配置电极 montage，生成/加载前向模型，可选生成 BEM 模型 |
+| 信号源 | 通过偶极子或解剖标签创建 patch，配置正弦、余弦、ERP、高斯、Gamma、振荡包络和自定义波形 |
+| 耦合 | 支持线性、非线性、延迟耦合，以及基于 MNE 几何关系的权重 |
+| 噪声 | 支持白噪声、粉红噪声、1/f、布朗噪声、工频、EOG、EMG、ECG，可叠加多个实例 |
+| 电极与通道 | 选择 montage，并选择参与仿真、输出和显示的通道 |
+| 实时显示 | 显示滤波后的多通道波形、FFT 频谱和前向模型地形热力图 |
+| 输出 | 支持 LSL 实时流、EDF 文件、FIF 文件，可设置时长限制 |
+| 项目管理 | 保存和加载 patch、耦合、噪声、滤波、montage、模型路径和输出配置 |
+| 界面 | 支持浅色/深色主题和中英文界面 |
+
+---
+
+## 当前工作流
+
+界面按实际工作流程组织：
+
+```text
+模型准备 -> 信号源 -> 电极与通道 -> 噪声 -> 输出 -> 实时信号
 ```
 
+### 1. 模型准备
+
+模型准备页面用于准备仿真所需的物理模型。
+
+- 加载或创建源空间。
+- 配置电极 montage。
+- 生成或加载前向模型。
+- 如果需要 BEM 流程，可以生成 BEM 模型。
+- BEM 生成完成后，按钮下方会显示生成信息。
+
+推荐顺序：
+
+```text
+加载源空间 -> 按需要生成/加载 BEM -> 选择 montage -> 生成前向模型
+```
+
+如果源空间与前向模型的顶点不完全一致，仿真器会尽量按空间位置将 dipole 吸附到附近有效 forward 顶点，并在日志中输出吸附距离。
+
+<p align="center">
+  <img src="docs/pic/model.png" alt="模型准备页面" width="900">
+</p>
+
+### 2. 信号源
+
+信号源使用 patch 描述皮层活动。
+
+- 一个 patch 是一组共享波形设置的偶极子。
+- patch 可由手动选择的 dipole 创建，也可从解剖标签批量创建。
+- 支持正弦、余弦、ERP、高斯、Gamma、瞬态振荡和自定义采样序列。
+- patch 幅度单位为 nAm，默认 MNE 源电流换算比例为 `1e-9 A/nAm`。
+
+<p align="center">
+  <img src="docs/pic/source.png" alt="信号源页面" width="900">
+</p>
+
+### 3. 耦合
+
+patch 之间可以建立耦合关系：
+
+| 类型 | 公式 |
+| --- | --- |
+| 线性 | `target += strength * source` |
+| 非线性 | `target += strength * tanh(source)` |
+| 延迟 | `target += strength * source(t-delay)` |
+| MNE 权重 | 在可用时根据 patch 几何关系计算权重 |
+
+### 4. 电极与通道
+
+选择 montage 和仿真通道。montage 会决定前向模型和热力图使用的传感器位置。
+
+<p align="center">
+  <img src="docs/pic/electrode.png" alt="电极与通道页面" width="900">
+</p>
+
+### 5. 噪声
+
+噪声配置已从信号源配置中分离。
+
+| 类型 | 说明 |
+| --- | --- |
+| White | 平坦频谱白噪声 |
+| Pink | 1/f 粉红噪声 |
+| 1/f | 指数可调的分数噪声 |
+| Brown | 1/f^2、类似随机游走的低频噪声 |
+| Line | 50/60 Hz 工频干扰 |
+| EOG | 眨眼和眼动伪迹 |
+| EMG | 肌电伪迹 |
+| ECG | 心电伪迹 |
+
+当前实现说明：噪声目前按通道独立生成，适合压测去噪算法，但对 EOG、工频等空间相关伪迹还不完全真实。空间相关噪声模型见 [docs/noise_spatial_model_todo.md](docs/noise_spatial_model_todo.md)。
+
+<p align="center">
+  <img src="docs/pic/noise.png" alt="噪声配置页面" width="900">
+</p>
+
+### 6. 输出
+
+配置采样率、输出格式、输出目录、文件名和仿真时长。
+
+| 格式 | 说明 |
+| --- | --- |
+| LSL | 通过 Lab Streaming Layer 输出实时流 |
+| EDF | 通过 pyEDFlib 导出 EDF 文件 |
+| FIF | 导出 MNE 原生 Raw 文件 |
+
+<p align="center">
+  <img src="docs/pic/output.png" alt="输出页面" width="900">
+</p>
+
+### 7. 实时信号
+
+实时信号页面显示：
+
+- 多通道滤波波形。
+- 高通、低通和 50/60 Hz 陷波滤波。
+- 可选 FFT 频谱。
+- 可选头皮地形热力图。
+
+当前热力图在存在前向模型时使用 forward 模型中的 EEG 传感器位置，并基于前向投影后的全通道 EEG 计算频带功率。因此它与物理模型保持一致，而不是只使用当前显示的少数通道。
+
+<p align="center">
+  <img src="docs/pic/realtime.png" alt="实时信号页面" width="900">
+</p>
+
 ---
 
-## 🚀 快速开始
+## 实时引擎设计
+
+当前实时引擎将“数据生成”和“界面刷新”分离：
+
+1. 后台 `QThread` 每次生成约 **1 秒** EEG 数据。
+2. 生成好的数据块进入内部队列。
+3. UI 定时器每帧只消费固定数量的样本：
+
+```text
+每帧样本数 = 采样率 / 仿真刷新 FPS
+```
+
+例如 `1000 Hz`、`20 FPS` 时，每帧消费约 `50` 个样本。
+
+这样可以避免每次 UI 刷新都调用前向模型，也能在生成成本较高时保持界面响应。
+
+### 性能说明
+
+- 前向投影优先使用稀疏快速路径：只投影活跃 dipole 对应的 forward 矩阵列。
+- 如果 forward 结构不适合快速路径，会自动回退到安全的 MNE 兼容路径。
+- 波形显示会为了渲染而抽稀，但生成和导出的数据仍保持原始采样率。
+- FFT 使用较轻量的实时分析窗口。
+- 热力图频带功率在 worker 中基于 forward 投影数据预先计算，UI 只渲染最近结果。
+- 慢路径日志会输出 worker、投影、噪声、buffer、绘图和热力图耗时。
+
+示例日志：
+
+```text
+实时性能: samples=50 queued=1.20s worker=...ms(source=... project=... heatmap_power=... noise=...) ui=...ms(buffer=... plot=... heatmap=...)
+```
+
+---
+
+## 前向模型与热力图行为
+
+存在前向模型时：
+
+- patch dipole 会通过 forward solution 投影到 EEG 传感器。
+- 仿真器会将 UI 通道名映射到 forward 模型通道名。
+- 如果 dipole 顶点不在 forward 源空间中，会尽量按位置吸附到附近有效 forward 顶点，并记录距离。
+- 实时热力图使用 forward 模型中的 EEG 传感器位置。
+
+没有前向模型时：
+
+- 应用会提示当前没有可用前向模型。
+- 仿真会使用确定性的简化投影作为回退。
+- 简化投影适合界面测试和粗略演示，不适合定量解释。
+
+---
+
+## 项目结构
+
+```text
+eeg_simulator/
+  core/
+    mne_simulator.py          # 前向投影与 MNE 集成
+    output_sink.py            # LSL / EDF / FIF 输出
+    signal_engine.py          # 波形和噪声生成
+    simulator/
+      app.py                  # 主窗口状态
+      simulation.py           # 实时队列、worker、启停循环
+      signal.py               # 投影、滤波、FFT、热力图功率
+      buffers.py              # buffer 尺寸和采样率同步
+      mne.py                  # 模型生成辅助
+      patch_ops.py            # patch、耦合、噪声操作
+  models/                     # patch、dipole、耦合和信号模型
+  ui/                         # 主题、控件、面板、对话框
+  utils/                      # 配置、项目、国际化、日志、MNE 加载
+docs/                         # 界面文档
+tests/                        # 单元测试
+main.py                       # 启动脚本
+```
+
+---
+
+## 快速开始
 
 ### 环境要求
 
 - Python 3.8+
-- Windows / Linux / macOS
-- 4GB+ 内存（推荐 8GB）
+- Windows、Linux 或 macOS
+- 至少 4 GB 内存，推荐 8 GB
 
 ### 安装
 
 ```bash
-# 1. 克隆仓库
 git clone <repository-url>
-cd EEG_Simulation
+cd eeg-simulator
 
-# 2. 创建虚拟环境（推荐）
 python -m venv .venv
 
 # Windows
@@ -97,379 +238,58 @@ python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
 
-# 3. 安装依赖
 pip install -r requirements.txt
-
-# 4. 下载 MNE Sample 数据集（首次运行自动下载）
 python -c "import mne; mne.datasets.sample.data_path()"
 ```
 
-### 启动程序
+### 启动
 
 ```bash
-# 方式1：使用启动脚本
 python main.py
 
-# 方式2：使用模块方式
+# 或
 python -m eeg_simulator
 ```
 
 ---
 
-## 📖 使用指南
-
-### 基本工作流程
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  加载源空间  │ -> │  选择信号源  │ -> │  配置信号   │ -> │  运行仿真   │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-```
-
-#### 1. 加载源空间
-- 点击 **"加载 MNE Sample 源空间"** 加载示例数据
-- 或点击 **"从文件加载源空间"** 加载自定义 `-src.fif` 文件
-
-<p align="center">
-  <img src="docs/pic/source_cfg.jpg" alt="源配置页面" width="900">
-</p>
-
-#### 2. 选择信号源
-- 点击 **"选择源空间点..."** 打开 MRI 切片可视化选择器
-- 在 MRI 切片上点击选择单个点（绿色=左脑，红色=右脑，黄色星形=已选中）
-- 或在 **"解剖学标签"** 中勾选区域，批量添加选中区域的全部源点
-
-<p align="center">
-  <img src="docs/pic/patch.jpg" alt="Patch 管理" width="900">
-</p>
-
-#### 3. 配置信号
-- **Patch 管理**：创建和管理 Patch（相邻偶极子组）
-- **信号生成器**：为正弦波、ERP、Gamma 等信号配置参数
-- **耦合模型**：定义 Patch 之间的线性/非线性/延迟连接
-- **噪声设置**：添加白噪声、生理噪声等
-
-<p align="center">
-  <img src="docs/pic/noise.jpg" alt="噪声管理器" width="900">
-</p>
-
-#### 4. 设置 BEM 模型（可选）
-- 设置脑组织、颅骨、头皮的导电率
-- 点击 **"生成 BEM 模型"**
-
-#### 5. 电极与通道
-- 选择 10–20（或其他）布局，勾选参与仿真/显示的通道
-
-<p align="center">
-  <img src="docs/pic/channel.jpg" alt="电极与通道选择" width="900">
-</p>
-
-#### 6. 输出设置
-- 设置采样率（默认 1000 Hz）
-- 选择输出：**LSL**、**EDF** 或 **FIF**；可设仿真时长（到时自动停止）
-- 在本页启动/停止仿真
-
-<p align="center">
-  <img src="docs/pic/output.jpg" alt="输出设置" width="900">
-</p>
-
-#### 7. 实时信号
-- 查看多通道滤波波形（时间窗口 1–60 s）
-- 可选 **地形图热力图** 与 **FFT** 侧栏
-- 滤波：高通、低通、**50/60 Hz 陷波**；修改滤波参数会清空显示缓冲
-
-<p align="center">
-  <img src="docs/pic/realtime.jpg" alt="实时信号" width="900">
-</p>
-
-> **导航结构：** 四个主页面 — 源空间配置 → 电极与通道 → 输出 → 实时信号。Patch / 耦合 / 噪声管理器从源空间配置页打开。
-
----
-
-## 🔧 核心概念
-
-### Patch 模型
-
-**Patch** 是 EEG 信号仿真的核心抽象，表示大脑中的一个功能区域：
-
-- 包含一个**中心偶极子**（anchor）和相邻偶极子
-- 所有偶极子共享相同的**波形设置**
-- 支持波形类型：**正弦、余弦、ERP、高斯、Gamma、振荡包络、自定义**
-- 波形 **幅度** 单位为 **nAm（纳安）**。**幅度换算**（默认 `1 × 10⁻⁹ A/nAm`）用于写入 MNE 源电流。
-- 经前向投影后的头皮 EEG 通常为 **μV** 量级 — 例如 10–20 nAm 在额区电极上可能只有数 μV，取决于源位置与导联。
-
-```python
-from eeg_simulator.models import Patch
-
-patch = Patch(
-    id="patch_1",
-    label_name="superiortemporal-lh",
-    hemi="lh",
-    waveform_type="sin",
-    waveform_params={"frequency": 10, "amplitude": 20},  # 20 nAm
-)
-patch.amplitude_scale = 1e-9  # 默认 MNE 单位换算
-```
-
-### 耦合模型
-
-定义 Patch 之间的信号连接关系：
-
-| 耦合类型 | 公式 | 说明 |
-|---------|------|------|
-| 线性耦合 | `target += strength * source` | 直接信号传递 |
-| 非线性耦合 | `target += strength * tanh(source)` | 饱和非线性 |
-| 延迟耦合 | `target += strength * source(t-delay)` | 时延连接 |
-
-### 信号类型
-
-| 类型 | 说明 | 参数 |
-|------|------|------|
-| 正弦 / 余弦 | 振荡 | frequency, amplitude (nAm), phase |
-| ERP | 事件相关电位 | frequency, latency, width, polarity |
-| Gaussian | 高斯调制 | frequency, sigma, center |
-| Gamma | Gamma 包络 | frequency, alpha, beta |
-| Oscillation | 瞬态振荡 | freq, amp, center, width |
-| Custom | 自定义采样序列 | frequency, data |
-
-### 前向投影
-
-- 加载 **`-fwd.fif`** 后使用 **MNE `apply_forward`**（推荐）。
-- 无前向模型时使用**确定性简化投影**并提示警告 — 不适合定量分析。
-
-### 输出格式
-
-| 格式 | 说明 |
-|------|------|
-| **LSL** | Lab Streaming Layer 实时流（`pylsl`） |
-| **EDF** | 欧洲数据格式（`pyedflib`） |
-| **FIF** | MNE 原生 Raw 文件 |
-
----
-
-## 🔊 噪声管理
-
-系统支持多种噪声类型，可叠加多个噪声实例。
-
-> **实现说明：** 当前噪声在**各通道独立生成**（便于压测去噪算法，但对 EOG/工频等空间相关伪迹不够真实）。空间相关噪声模型见 [docs/noise_spatial_model_todo.md](docs/noise_spatial_model_todo.md)。
-
-### 噪声类型
-
-| 类型 | 说明 | 可配置参数 |
-|------|------|-----------|
-| **White** | 白噪声（平坦频谱）| 幅度、截止频率 |
-| **Pink** | 粉红噪声（1/f 频谱）| 幅度 |
-| **1/f** | 分数噪声 | 幅度、指数 |
-| **Brown** | 布朗噪声（1/f² 频谱）| 幅度 |
-| **Line** | 工频干扰 | 幅度、频率（50/60 Hz）|
-| **EOG** | 眼电伪迹 | 幅度、截止频率、眨眼频率 |
-| **EMG** | 肌电伪迹 | 幅度、截止频率 |
-| **ECG** | 心电伪迹 | 幅度、心率（BPM）|
-
-#### 生理噪声详解
-
-**ECG (心电伪迹)**
-- 模拟心电图波形，包含 P 波、QRS 复合波、T 波
-- 使用简化的生理模型，基于心率生成周期性心跳信号
-- 典型幅度：20-50 μV
-- 适用于模拟心跳对 EEG 的干扰
-
-**EOG (眼电伪迹)**
-- 模拟眨眼和眼动产生的低频瞬态干扰
-- 眨眼波形：快速上升后缓慢下降的双相脉冲
-- 眨眼频率可配置（默认 0.5 Hz，约每2秒一次）
-- 包含慢速眼动基线漂移（0.1-0.5 Hz）
-- 典型幅度：50-200 μV（眨眼伪迹通常较强）
-
-**EMG (肌电伪迹)**
-- 模拟肌肉活动产生的高频非周期性噪声
-- 多频带合成：10-30 Hz（大运动单位）、30-100 Hz（主要能量）、100-200 Hz（快速运动单位）
-- 模拟爆发性活动（肌肉收缩期）
-- 典型幅度：10-30 μV
-
-### 噪声频谱特性详解
-
-| 噪声类型 | 功率谱密度 | 频谱特征 | 生成方法 |
-|---------|-----------|---------|---------|
-| **白噪声** | $P(f) = C$ | 平坦频谱 | 纯随机序列 |
-| **粉红噪声** | $P(f) = C/f$ | 1/f 衰减 | 白噪声积分 |
-| **布朗噪声** | $P(f) = C/f^2$ | 1/f² 衰减 | 白噪声双重积分 |
-| **1/f 噪声** | $P(f) = C/f^\alpha$ | α 可调衰减 | 分数积分滤波 |
-
-#### 白噪声 (White Noise)
-
-**频谱特征**：**平坦** (Flat Spectrum)，所有频率成分能量相同
-
-| 属性 | 说明 |
-|------|------|
-| **物理含义** | 类似白光包含所有颜色，各频率能量相等 |
-| **听起来** | 嘶嘶声，类似电视雪花 |
-| **EEG 意义** | 模拟电子热噪声、量化噪声 |
-
-**FFT 图像**：近似水平直线
-
-#### 粉红噪声 (Pink Noise)
-
-**频谱特征**：**1/f 衰减**，每倍频程能量相等
-
-| 属性 | 说明 |
-|------|------|
-| **物理含义** | 低频能量高，高频能量低，能量按 1/f 衰减 |
-| **听起来** | 更"柔和"，类似风声或流水 |
-| **EEG 意义** | 接近真实脑电背景活动（脑电具有 1/f 特性）|
-
-**能量分布**：
-- 1-2 Hz: 能量 = 1
-- 2-4 Hz: 能量 = 0.5（总和与 1-2Hz 相同）
-- 4-8 Hz: 能量 = 0.25
-
-**FFT 图像**：从左到右单调下降（斜率约 -10 dB/倍频程）
-
-#### 布朗噪声 (Brown Noise)
-
-**频谱特征**：**1/f² 衰减**，低频占绝对主导
-
-| 属性 | 说明 |
-|------|------|
-| **物理含义** | 比粉红噪声衰减更快，随机游走特性 |
-| **听起来** | 低沉的隆隆声 |
-| **EEG 意义** | 模拟电极极化漂移、缓慢基线漂移 |
-
-**与白噪声对比**：
-- 白噪声：相邻样本独立无关
-- 布朗噪声：强相关性（随机游走）
-
-**FFT 图像**：急剧下降（斜率约 -20 dB/倍频程）
-
-#### 1/f 噪声 (Fractional Noise)
-
-**频谱特征**：**1/f^α 衰减**（α 可调，0 ≤ α ≤ 2）
-
-| α 值 | 噪声类型 | 频谱斜率 |
-|------|---------|---------|
-| 0 | 白噪声 | 0 dB/倍频程 |
-| 0.5 | 中间态 | -5 dB/倍频程 |
-| 1.0 | 粉红噪声 | -10 dB/倍频程 |
-| 1.5 | 中间态 | -15 dB/倍频程 |
-| 2.0 | 布朗噪声 | -20 dB/倍频程 |
-
-**用途**：可根据需要精细调节背景噪声的频谱特性
-
-#### 频谱对比示意图
-
-```
-幅度 (dB)
-  |
-0 |    白噪声 ─────────────────────────
-  |    粉红噪声 ─────╲
-  |    1/f (α=1.5) ──────╲
-  |    布朗噪声 ───────────╲
--20|                        ╲
-  |                          ╲
--40|                            ╲_____
-  |
-  +------------------------------------
-     1Hz   10Hz   100Hz   1000Hz   频率
-```
-
-### 使用方式
-
-1. 点击 **"噪声设置"** 按钮打开噪声管理器
-2. 在右侧面板选择噪声类型，配置参数
-3. 点击 **"添加"** 将噪声实例加入列表
-4. 可添加多个同类型噪声实例（如不同幅度的白噪声）
-5. 在左侧面板查看和管理已添加的噪声
-6. 点击 **"确定"** 应用配置
-
-### 噪声参数说明
-
-| 参数 | 说明 | 适用范围 |
-|------|------|---------|
-| **幅度** | 噪声强度（μV）| 所有噪声类型 |
-| **截止频率** | 低通滤波截止频率（Hz）| White、EOG、EMG |
-| **指数** | 1/f 噪声的频谱指数 | 1/f 噪声 |
-| **工频频率** | 50 Hz 或 60 Hz | Line 噪声 |
-| **心率** | 心跳频率（BPM）| ECG 噪声 |
-| **眨眼频率** | 眨眼次数/秒 | EOG 噪声 |
-
----
-
-## 🎮 快捷键
-
-| 快捷键 | 功能 |
-|--------|------|
-| `Ctrl+N` | 新建项目 |
-| `Ctrl+O` | 打开项目 |
-| `Ctrl+S` | 保存项目 |
-| `Ctrl+Shift+S` | 另存为 |
-
----
-
-## ⚙️ 设置
-
-程序设置自动保存在 `~/.eegs/config.db`（SQLite 数据库）：
-
-- 语言（中文/英文）
-- 主题（深色/浅色）
-- 默认采样率
-- 默认项目目录
-- 滤波阶数
-
----
-
-## 🧪 测试
+## 测试
 
 ```bash
-# 推荐：单元测试（unittest + pytest）
-python tests/run_tests.py
+python -m pytest -q
+```
 
-# 仅 pytest
-python -m pytest tests/
+可选脚本：
 
-# 可选脚本
+```bash
 python tests/test_compare_mne.py
 python tests/test_noise_visualization.py
 ```
 
-CI 在 push/PR 时运行 `python tests/run_tests.py`（见 `.github/workflows/tests.yml`）。
+---
 
-### 噪声可视化测试
+## 设置
 
-运行 `test_noise_visualization.py` 可生成所有噪声类型的波形图和频谱对比图：
+用户设置保存在 `~/.eegs/config.db`：
 
-- **噪声总览图** (`tests/noise_plots/noise_overview.png`): 8 种噪声的时域波形 + 频谱对比
-- **生理噪声详细图** (`tests/noise_plots/noise_detailed_detailed.png`): ECG/EOG/EMG 的参数变化对比
+- 语言
+- 主题
+- 默认采样率
+- 默认项目目录
+- 滤波器阶数
+- 热力图刷新间隔
 
 ---
 
-## 📚 依赖
-
-详见 `requirements.txt`。
-
-- **GUI**: [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) ≥ 6.0
-- **信号处理**: [NumPy](https://numpy.org/) ≥ 1.20, [SciPy](https://scipy.org/) ≥ 1.7, [MNE-Python](https://mne.tools/) ≥ 1.0
-- **可视化**: [pyqtgraph](http://www.pyqtgraph.org/) ≥ 0.13, [Matplotlib](https://matplotlib.org/) ≥ 3.5
-- **脑影像**: [NiBabel](https://nipy.org/nibabel/) 5.4
-- **导出/流式**: [pyEDFlib](https://pyedflib.readthedocs.io/) 0.1.42, [pylsl](https://github.com/labstreaminglayer/liblsl-Python) ≥ 1.16
-- **测试**: [pytest](https://pytest.org/) ≥ 7.0
-
----
-
-## 📄 许可证
+## 许可证
 
 [MIT License](LICENSE)
 
 ---
 
-## 🙏 致谢
+## 致谢
 
-- [MNE-Python](https://mne.tools/) - 强大的脑电数据分析工具
-- [PyQt](https://www.riverbankcomputing.com/software/pyqt/) - Qt 的 Python 绑定
-- [pyqtgraph](http://www.pyqtgraph.org/) - 高性能科学绘图
-- [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/) - 脑影像分析软件
-
----
-
-<p align="center">
-  <sub>Built with ❤️ for neuroscience research</sub>
-</p>
+- [MNE-Python](https://mne.tools/)
+- [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
+- [pyqtgraph](http://www.pyqtgraph.org/)
+- [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/)
