@@ -1,4 +1,4 @@
-# EEG Simulator | 脑电信号仿真器
+ # EEG Simulator | 脑电信号仿真器
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/PyQt6-6.0+-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
@@ -60,15 +60,17 @@ EEG Simulator 是一个基于 **PyQt6** 和 **MNE-Python** 的桌面脑电仿真
 ### 2. 信号源
 
 信号源使用 patch 描述皮层活动。
-
+<p align="center">
+  <img src="docs/pic/source.png" alt="信号源页面" width="900">
+</p>
 - 一个 patch 是一组共享波形设置的偶极子。
 - patch 可由手动选择的 dipole 创建，也可从解剖标签批量创建。
 - 支持正弦、余弦、ERP、高斯、Gamma、瞬态振荡和自定义采样序列。
 - patch 幅度单位为 nAm，默认 MNE 源电流换算比例为 `1e-9 A/nAm`。
-
 <p align="center">
-  <img src="docs/pic/source.png" alt="信号源页面" width="900">
+  <img src="docs/pic/patch.jpg" alt="patchCfg" width="900">
 </p>
+
 
 ### 3. 耦合
 
@@ -80,6 +82,9 @@ patch 之间可以建立耦合关系：
 | 非线性 | `target += strength * tanh(source)` |
 | 延迟 | `target += strength * source(t-delay)` |
 | MNE 权重 | 在可用时根据 patch 几何关系计算权重 |
+<p align="center">
+  <img src="docs/pic/patchCouping.jpg" alt="patchCfg" width="900">
+</p>
 
 ### 4. 电极与通道
 
@@ -92,6 +97,10 @@ patch 之间可以建立耦合关系：
 ### 5. 噪声
 
 噪声配置已从信号源配置中分离。
+
+<p align="center">
+  <img src="docs/pic/noise.png" alt="噪声配置页面" width="900">
+</p>
 
 | 类型 | 说明 |
 | --- | --- |
@@ -107,7 +116,7 @@ patch 之间可以建立耦合关系：
 当前实现说明：噪声目前按通道独立生成，适合压测去噪算法，但对 EOG、工频等空间相关伪迹还不完全真实。空间相关噪声模型见 [docs/noise_spatial_model_todo.md](docs/noise_spatial_model_todo.md)。
 
 <p align="center">
-  <img src="docs/pic/noise.png" alt="噪声配置页面" width="900">
+  <img src="docs/pic/noise_cfg.png" alt="噪声配置页面" width="900">
 </p>
 
 ### 6. 输出

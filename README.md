@@ -61,13 +61,17 @@ If the source space and forward model are not perfectly aligned, the simulator c
 
 Use patches to describe cortical source activity.
 
+<p align="center">
+  <img src="docs/pic/source.png" alt="Signal Sources page" width="900">
+</p>
+
 - A patch is a group of dipoles that share waveform settings.
 - Patches can be created manually from selected dipoles or from anatomical labels.
 - Supported waveforms include sine, cosine, ERP, Gaussian, Gamma, transient oscillation, and custom samples.
 - Patch amplitude is configured in nAm. The default MNE current scale is `1e-9 A/nAm`.
 
 <p align="center">
-  <img src="docs/pic/source.png" alt="Signal Sources page" width="900">
+  <img src="docs/pic/patch.jpg" alt="Patch configuration dialog" width="900">
 </p>
 
 ### 3. Coupling
@@ -81,6 +85,10 @@ Patch-to-patch coupling supports:
 | Delayed | `target += strength * source(t-delay)` |
 | MNE weighted | Uses geometry-derived patch weights where available |
 
+<p align="center">
+  <img src="docs/pic/patchCouping.jpg" alt="Patch coupling configuration" width="900">
+</p>
+
 ### 4. Electrodes & Channels
 
 Select the montage and channels used by the run. The montage determines sensor positions for the forward model and heatmap.
@@ -92,6 +100,10 @@ Select the montage and channels used by the run. The montage determines sensor p
 ### 5. Noise
 
 Noise configuration is separated from signal-source configuration.
+
+<p align="center">
+  <img src="docs/pic/noise.png" alt="Noise page" width="900">
+</p>
 
 | Type | Description |
 | --- | --- |
@@ -107,7 +119,7 @@ Noise configuration is separated from signal-source configuration.
 Current implementation note: noise is generated independently per channel. This is useful for stress-testing denoising pipelines, but spatially correlated artifact models are still planned. See [docs/noise_spatial_model_todo.md](docs/noise_spatial_model_todo.md).
 
 <p align="center">
-  <img src="docs/pic/noise.png" alt="Noise configuration page" width="900">
+  <img src="docs/pic/noise_cfg.png" alt="Noise configuration dialog" width="900">
 </p>
 
 ### 6. Output
