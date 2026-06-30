@@ -60,13 +60,16 @@ EEG Simulator 是一个基于 **PyQt6** 和 **MNE-Python** 的桌面脑电仿真
 ### 2. 信号源
 
 信号源使用 patch 描述皮层活动。
+
 <p align="center">
   <img src="docs/pic/source.png" alt="信号源页面" width="900">
 </p>
+
 - 一个 patch 是一组共享波形设置的偶极子。
 - patch 可由手动选择的 dipole 创建，也可从解剖标签批量创建。
 - 支持正弦、余弦、ERP、高斯、Gamma、瞬态振荡和自定义采样序列。
 - patch 幅度单位为 nAm，默认 MNE 源电流换算比例为 `1e-9 A/nAm`。
+
 <p align="center">
   <img src="docs/pic/patch.jpg" alt="patchCfg" width="900">
 </p>
