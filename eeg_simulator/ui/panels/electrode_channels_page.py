@@ -64,7 +64,7 @@ class ElectrodeChannelsPage(NavigationPage):
         self.viz_group = QGroupBox(tr('panel_head_layout'))
         viz_layout = QVBoxLayout(self.viz_group)
         
-        self.head_selector = HeadLayoutSelector(on_layout_changed=self._on_head_layout_changed)
+        self.head_selector = HeadLayoutSelector()
         self.head_selector.setMinimumHeight(350)
         viz_layout.addWidget(self.head_selector)
         
@@ -181,12 +181,7 @@ class ElectrodeChannelsPage(NavigationPage):
         splitter.setSizes([500, 500])
         layout.addWidget(splitter)
         
-        # 初始化通道列表
-        self._update_channel_list()
-    
-    def _on_head_layout_changed(self, layout_key):
-        """头部布局改变回调"""
-        # 更新通道列表
+        # 初始化通道列表（montage 由源配置页同步）
         self._update_channel_list()
     
     def get_head_widget(self):
@@ -236,15 +231,15 @@ class ElectrodeChannelsPage(NavigationPage):
         self._update_stats()
 
     def get_montage_key(self):
-        """当前电极布局 key（MNE montage 名称）"""
-        if hasattr(self, 'head_selector') and hasattr(self.head_selector, 'combo'):
-            return self.head_selector.combo.currentData()
+        """当前电极 montage（由源配置页管理）"""
+        if hasattr(self.parent_simulator, 'source_page'):
+            return self.parent_simulator.source_page.get_montage_key()
         return None
 
     def set_montage_key(self, montage_key):
-        """恢复电极布局"""
-        if montage_key and hasattr(self, 'head_selector'):
-            self.head_selector.set_montage(montage_key)
+        """恢复电极 montage（委托源配置页）"""
+        if montage_key and hasattr(self.parent_simulator, 'source_page'):
+            self.parent_simulator.source_page.set_montage_key(montage_key)
     
     def _select_all_channels(self):
         """全选通道"""
@@ -279,7 +274,9 @@ class ElectrodeChannelsPage(NavigationPage):
             self.parent_simulator.ui._update_status_bar()
     
     def get_current_montage(self):
-        """获取当前选中的电极布局"""
+        """获取当前 montage（由源配置页管理）"""
+        if hasattr(self.parent_simulator, 'source_page'):
+            return self.parent_simulator.source_page.get_current_montage()
         head_widget = self.get_head_widget()
         if hasattr(head_widget, '_montage'):
             return head_widget._montage
@@ -386,13 +383,13 @@ class ElectrodeChannelsPage(NavigationPage):
         # 更新说明文字
         self.info_label.setText(tr('channels_info'))
         
-        # 更新头部布局选择器
-        self.head_selector.update_texts()
-        
         # 更新按钮文本
         self.select_all_btn.setText(tr('btn_select_all'))
         self.clear_btn.setText(tr('btn_clear'))
         self.invert_btn.setText(tr('btn_invert_selection'))
+        
+        if hasattr(self, 'head_selector'):
+            self.head_selector.update_texts()
         
         # 更新统计
         self._update_stats()

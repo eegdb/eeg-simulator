@@ -27,3 +27,28 @@ def get_existing_directory(
         options=_directory_dialog_options(),
     )
     return path or ''
+
+
+def _file_dialog_options() -> QFileDialog.Option:
+    options = QFileDialog.Option(0)
+    if sys.platform == 'darwin':
+        options |= QFileDialog.Option.DontUseNativeDialog
+    return options
+
+
+def get_open_file_name(
+    parent: QWidget,
+    title: str,
+    start_dir: str = '',
+    file_filter: str = '',
+) -> str:
+    """选择文件；返回空字符串表示取消"""
+    initial = start_dir or str(Path.home())
+    path, _ = QFileDialog.getOpenFileName(
+        parent,
+        title,
+        initial,
+        file_filter,
+        options=_file_dialog_options(),
+    )
+    return path or ''

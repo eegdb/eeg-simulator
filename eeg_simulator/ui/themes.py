@@ -1,5 +1,9 @@
 """主题样式定义 - 支持深色和浅色模式"""
 
+from pathlib import Path
+
+CHECKMARK_ICON = (Path(__file__).resolve().parents[1] / "assets" / "checkmark-white.svg").as_posix()
+
 # 深色主题
 DARK_THEME = {
     "name": "dark",
@@ -13,6 +17,8 @@ DARK_THEME = {
     "text_inverse": "#000000",
     "border": "#27272a",
     "border_focus": "#10b981",
+    "checkbox_border": "#a1a1aa",
+    "checkbox_bg": "#18181b",
     "red": "#ef4444",
     "blue": "#3b82f6",
     "green": "#10b981",
@@ -34,6 +40,8 @@ LIGHT_THEME = {
     "text_inverse": "#ffffff",
     "border": "#e2e8f0",  # Slate 200
     "border_focus": "#059669",
+    "checkbox_border": "#334155",
+    "checkbox_bg": "#ffffff",
     "red": "#dc2626",
     "blue": "#2563eb",
     "green": "#059669",
@@ -76,6 +84,7 @@ def generate_stylesheet(theme=None):
         theme = _current_theme
     
     c = theme  # 简写
+    checkmark = CHECKMARK_ICON
     
     return f"""
 QMainWindow, QWidget {{
@@ -189,24 +198,37 @@ QComboBox {{
     background-color: {c['bg_input']};
     color: {c['text_main']};
     border: 1px solid {c['border']};
-    padding: 5px 10px;
+    padding: 5px 28px 5px 10px;
     border-radius: 5px;
     min-width: 100px;
+    selection-background-color: {c['accent']};
+    selection-color: {c['text_inverse']};
 }}
 
 QComboBox:hover {{
     border-color: {c['border_focus']};
 }}
 
+QComboBox:focus {{
+    border-color: {c['border_focus']};
+}}
+
+QComboBox:disabled {{
+    background-color: {c['bg_card']};
+    color: {c['text_muted']};
+    border-color: {c['border']};
+}}
+
 QComboBox::drop-down {{
     border: none;
-    width: 20px;
+    width: 24px;
 }}
 
 QComboBox QAbstractItemView {{
     background-color: {c['bg_card']};
     color: {c['text_main']};
     selection-background-color: {c['accent']};
+    selection-color: {c['text_inverse']};
     border: 1px solid {c['border']};
     outline: none;
 }}
@@ -214,6 +236,14 @@ QComboBox QAbstractItemView {{
 QComboBox QAbstractItemView::item {{
     padding: 6px 10px;
     padding-left: 24px;
+    min-height: 22px;
+    background-color: {c['bg_card']};
+    color: {c['text_main']};
+}}
+
+QComboBox QAbstractItemView::item:hover {{
+    background-color: {c['bg_input']};
+    color: {c['text_main']};
 }}
 
 QComboBox QAbstractItemView::item:selected {{
@@ -304,22 +334,66 @@ QLineEdit:focus {{
     border-color: {c['border_focus']};
 }}
 
+QTextEdit, QPlainTextEdit {{
+    background-color: {c['bg_input']};
+    border: 1px solid {c['border']};
+    color: {c['text_main']};
+    padding: 5px 10px;
+    border-radius: 5px;
+}}
+
+QTextEdit:focus, QPlainTextEdit:focus {{
+    border-color: {c['border_focus']};
+}}
+
 QCheckBox {{
     color: {c['text_main']};
     spacing: 8px;
 }}
 
 QCheckBox::indicator {{
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    max-width: 16px;
+    max-height: 16px;
     border-radius: 3px;
-    border: 1px solid {c['border']};
-    background-color: {c['bg_input']};
+    border: 2px solid {c['checkbox_border']};
+    background-color: {c['checkbox_bg']};
+    image: none;
+}}
+
+QCheckBox::indicator:unchecked {{
+    border: 2px solid {c['checkbox_border']};
+    background-color: {c['checkbox_bg']};
+    image: none;
+}}
+
+QCheckBox::indicator:hover {{
+    border-color: {c['border_focus']};
+    background-color: {c['checkbox_bg']};
 }}
 
 QCheckBox::indicator:checked {{
     background-color: {c['accent']};
     border-color: {c['accent']};
+    image: url({checkmark});
+}}
+
+QCheckBox::indicator:checked:hover {{
+    background-color: {c['accent_hover']};
+    border-color: {c['accent_hover']};
+    image: url({checkmark});
+}}
+
+QCheckBox::indicator:disabled {{
+    border-color: {c['border']};
+    background-color: {c['bg_input']};
+}}
+
+QCheckBox:disabled {{
+    color: {c['text_muted']};
 }}
 
 QScrollArea {{

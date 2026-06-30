@@ -1,5 +1,7 @@
 """信号生成、耦合、投影、噪声与实时滤波。"""
 
+import copy
+
 import numpy as np
 
 from ...models.coupling import PatchCouplingEngine
@@ -7,12 +9,27 @@ from ...utils import tr, get_logger
 
 logger = get_logger(__name__)
 
+# 热力图频带定义：(fmin, fmax)；fmax=None 表示至 min(Nyquist, 100 Hz)
+HEATMAP_BAND_RANGES = {
+    'broadband': (0.5, None),
+    'delta': (0.5, 4.0),
+    'theta': (4.0, 8.0),
+    'alpha': (8.0, 13.0),
+    'beta': (13.0, 30.0),
+    'gamma': (30.0, 100.0),
+}
+# 窄频带功率低于全频带峰值此比例时，地形图显示为空白（避免 10 Hz 源在 Beta 仍出现 Alpha 形）
+HEATMAP_BAND_MIN_BB_RATIO = 0.01
+
 
 class SimulatorSignal:
     """SimulatorSignal 服务。"""
 
     def __init__(self, simulator):
         self._sim = simulator
+        self._heatmap_forward_cache_key = None
+        self._heatmap_forward_series = None
+        self._analysis_filter_cache = {}
 
     def _generate_patch_signals_batch(self, t, n_samples):
         """批量生成Patch信号 - 保持相位连续性"""
@@ -51,7 +68,7 @@ class SimulatorSignal:
                     current_signals, mne_factors
                 )
             elif self._sim._coupling_models:
-                current_time = self._sim.simulation_time + i * dt
+                current_time = t[i] if i < len(t) else self._sim.simulation_time + i * dt
                 current_signals = self._sim._coupling_engine.compute_coupled_signals(current_signals, current_time)
 
             for pid, signal in current_signals.items():
@@ -87,8 +104,9 @@ class SimulatorSignal:
         if self._sim._mne_coupling_engine is None or not self._sim._coupling_models:
             return []
 
-        k = self._sim.source_page.knn_spin.value() if hasattr(self._sim, 'source_page') else 3
-        decay_length = self._sim.source_page.decay_spin.value() if hasattr(self._sim, 'source_page') else 0.02
+        coupling_page = getattr(self._sim, 'signal_sources_page', None)
+        k = coupling_page.knn_spin.value() if coupling_page is not None else 3
+        decay_length = coupling_page.decay_spin.value() if coupling_page is not None else 0.02
         coupling_sig = tuple(
             (cid, c.source_patch_id, c.target_patch_id, c.type, c.strength, c.delay)
             for cid, c in sorted(self._sim._coupling_models.items())
@@ -142,39 +160,62 @@ class SimulatorSignal:
             return patch_signals
         return PatchCouplingEngine.apply_mne_factors(patch_signals, factors)
 
-    def _project_to_electrodes_batch(self, patch_signals, n_samples):
+    def _build_patch_data(self, patch_signals, n_samples):
+        """组装 MNE 仿真所需的 patch 数据"""
+        patch_data = {}
+        for patch_id, patch in self._sim.patches.items():
+            signals = patch_signals.get(patch_id, np.zeros(n_samples))
+            patch_data[patch_id] = {
+                'signals': signals,
+                'dipoles': patch.dipoles,
+                'amplitude_scale': getattr(patch, 'amplitude_scale', 1e-9),
+            }
+        return patch_data
+
+    def _project_to_electrodes_batch(
+        self,
+        patch_signals,
+        n_samples,
+        start_time=None,
+        return_all_data: bool = False,
+    ):
         """批量投影到电极"""
         if self._sim._mne_simulator is not None and self._sim._mne_simulator.is_ready():
-            patch_data = {}
-            for patch_id, patch in self._sim.patches.items():
-                signals = patch_signals.get(patch_id, np.zeros(n_samples))
-                patch_data[patch_id] = {
-                    'signals': signals,
-                    'dipoles': patch.dipoles,
-                    'amplitude_scale': getattr(patch, 'amplitude_scale', 1e-9)
-                }
+            patch_data = self._build_patch_data(patch_signals, n_samples)
 
             try:
-                all_data = self._sim._mne_simulator.simulate(patch_data, self._sim.simulation_time, n_samples)
+                all_data = self._sim._mne_simulator.simulate(
+                    patch_data,
+                    self._sim.simulation_time if start_time is None else start_time,
+                    n_samples,
+                )
                 # 只返回选中的通道，使用通道名称映射
                 eeg_data = {}
                 missing_channels = []  # 记录MNE投影失败的通道
+                logged = getattr(self._sim, '_logged_missing_channels', None)
+                if logged is None:
+                    logged = set()
+                    self._sim._logged_missing_channels = logged
 
                 for ch_name in self._sim.selected_channels:
-                    # 检查是否有通道映射 (标准10-20命名 -> MNE前向模型命名)
-                    mapped_name = self._sim.eeg_channel_mapping.get(ch_name, ch_name)
+                    mapped_name = self._sim.eeg_channel_mapping.get(ch_name)
+                    if mapped_name is None:
+                        mapped_name = ch_name
+                        if ch_name not in logged:
+                            logged.add(ch_name)
+                            logger.warning(
+                                f"通道 {ch_name} 未建立 EEG 映射（当前 montage 可能不含该导联），"
+                                f"将使用简化投影"
+                            )
+                        missing_channels.append(ch_name)
+                        continue
 
                     if mapped_name in all_data:
-                        eeg_data[ch_name] = all_data[mapped_name]  # 使用标准命名作为key
+                        eeg_data[ch_name] = all_data[mapped_name]
                     elif ch_name in all_data:
-                        # 通道名直接匹配（无需映射）
                         eeg_data[ch_name] = all_data[ch_name]
                     else:
                         missing_channels.append(ch_name)
-                        logged = getattr(self._sim, '_logged_missing_channels', None)
-                        if logged is None:
-                            logged = set()
-                            self._sim._logged_missing_channels = logged
                         if ch_name not in logged:
                             logged.add(ch_name)
                             logger.warning(
@@ -193,14 +234,16 @@ class SimulatorSignal:
                     logger.warning(f"没有匹配的通道! 选中: {self._sim.selected_channels}, "
                                  f"可用: {list(all_data.keys())[:10]}...")
                     # 完全回退到简化投影
-                    return self._simplified_projection_batch(patch_signals, n_samples)
+                    fallback = self._simplified_projection_batch(patch_signals, n_samples)
+                    return (fallback, None) if return_all_data else fallback
 
-                return eeg_data
+                return (eeg_data, all_data) if return_all_data else eeg_data
             except Exception as e:
                 logger.error(f"MNE投影失败: {e}")
 
         # 简化投影
-        return self._simplified_projection_batch(patch_signals, n_samples)
+        fallback = self._simplified_projection_batch(patch_signals, n_samples)
+        return (fallback, None) if return_all_data else fallback
 
     def _simplified_projection_batch(self, patch_signals, n_samples):
         """简化投影 - 用于EEG通道"""
@@ -333,13 +376,25 @@ class SimulatorSignal:
             eeg_data[ch_name] = signal + total_noise * 1e-6
         return eeg_data
 
+    def invalidate_heatmap_forward_cache(self):
+        """仿真步进后清除热力图全通道投影缓存（频带切换时复用）"""
+        self._heatmap_forward_cache_key = None
+        self._heatmap_forward_series = None
+
     def _update_buffers_batch(self, t, patch_signals, eeg_data, n_samples):
         """批量更新缓冲区 - 对新数据实时滤波后再存入"""
+        self.invalidate_heatmap_forward_cache()
+        take = min(n_samples, self._sim.buffer_size)
+
         # 更新时间缓冲区
-        self._sim.time_buffer = np.roll(self._sim.time_buffer, -n_samples)
-        self._sim.time_buffer[-n_samples:] = t
+        if take >= self._sim.buffer_size:
+            self._sim.time_buffer[:] = t[-self._sim.buffer_size:]
+        else:
+            self._sim.time_buffer[:-take] = self._sim.time_buffer[take:]
+            self._sim.time_buffer[-take:] = t[-take:]
 
         # 更新EEG缓冲区 - 只对新数据进行滤波
+        output_batch = {}
         for ch_name, signal in eeg_data.items():
             if ch_name not in self._sim.eeg_buffer:
                 self._sim.eeg_buffer[ch_name] = np.zeros(self._sim.buffer_size)
@@ -352,17 +407,17 @@ class SimulatorSignal:
                 signal_uV = self._apply_filter(signal_uV, ch_name)
 
             # 存入缓冲区
-            self._sim.eeg_buffer[ch_name] = np.roll(self._sim.eeg_buffer[ch_name], -n_samples)
-            self._sim.eeg_buffer[ch_name][-n_samples:] = signal_uV
+            if take >= self._sim.buffer_size:
+                self._sim.eeg_buffer[ch_name][:] = signal_uV[-self._sim.buffer_size:]
+            else:
+                buf = self._sim.eeg_buffer[ch_name]
+                buf[:-take] = buf[take:]
+                buf[-take:] = signal_uV[-take:]
+            if ch_name in self._sim.selected_channels:
+                output_batch[ch_name] = signal_uV.copy()
 
-        if self._sim._output_sink and n_samples > 0:
-            batch = {
-                ch: self._sim.eeg_buffer[ch][-n_samples:].copy()
-                for ch in self._sim.selected_channels
-                if ch in self._sim.eeg_buffer
-            }
-            if batch:
-                self._sim._output_sink.write_batch(batch)
+        if self._sim._output_sink and output_batch:
+            self._sim._output_sink.write_batch(output_batch)
 
     def _init_filter_states(self):
         """初始化实时滤波状态和系数
@@ -535,20 +590,12 @@ class SimulatorSignal:
                 return
 
             # 获取数据
-            data = self._sim.eeg_buffer[fft_channel][-n_samples:]
+            fft_samples = min(n_samples, 2048)
+            data = self._sim.eeg_buffer[fft_channel][-fft_samples:]
             if len(data) < 256:  # 需要足够的数据点
                 return
 
-            # 计算FFT
-            from scipy import fft
-            # 使用Hamming窗
-            window = np.hamming(len(data))
-            data_windowed = data * window
-
-            # FFT计算
-            fft_vals = fft.fft(data_windowed)
-            fft_power = np.abs(fft_vals[:len(fft_vals)//2]) ** 2
-            freqs = fft.fftfreq(len(data), 1/self._sim.sampling_rate)[:len(fft_power)]
+            freqs, fft_power = self._compute_channel_psd(data, self._sim.sampling_rate)
 
             # 显示0到采样率一半的频段（奈奎斯特频率）
             max_freq = self._sim.sampling_rate / 2
@@ -564,3 +611,331 @@ class SimulatorSignal:
 
         except Exception as e:
             logger.debug(f"FFT更新失败: {e}")
+
+    @staticmethod
+    def _compute_channel_psd(data: np.ndarray, sampling_rate: float):
+        """计算单通道加窗功率谱密度"""
+        data = np.asarray(data, dtype=float)
+        window = np.hamming(len(data))
+        data_windowed = data * window
+        n = len(data)
+        fft_vals = np.fft.rfft(data_windowed)
+        fft_power = np.abs(fft_vals) ** 2 / max(n, 1)
+        freqs = np.fft.rfftfreq(n, 1.0 / sampling_rate)
+        return freqs, fft_power
+
+    @staticmethod
+    def _band_mean_power(freqs: np.ndarray, power: np.ndarray, fmin: float, fmax: float) -> float:
+        """频带内平均功率"""
+        mask = (freqs >= fmin) & (freqs <= fmax)
+        if not np.any(mask):
+            return 0.0
+        return float(np.mean(power[mask]))
+
+    def _resolve_heatmap_band(self, band_key: str) -> tuple[float, float]:
+        """解析热力图频带上下限"""
+        fmin, fmax = HEATMAP_BAND_RANGES.get(band_key, HEATMAP_BAND_RANGES['alpha'])
+        nyquist = self._sim.sampling_rate / 2.0
+        if fmax is None:
+            fmax = min(nyquist, 100.0)
+        else:
+            fmax = min(fmax, nyquist)
+        fmin = max(fmin, 0.0)
+        return fmin, fmax
+
+    def _filter_window_offline(self, data_uV: np.ndarray) -> np.ndarray:
+        """对分析窗口做零相位滤波（不修改实时滤波状态）"""
+        from scipy import signal as sp_signal
+
+        if not self._sim._filter_coeffs:
+            return data_uV
+        data = np.asarray(data_uV, dtype=float)
+        coeffs = self._sim._filter_coeffs
+        if 'hp' in coeffs:
+            data = sp_signal.sosfiltfilt(coeffs['hp'], data)
+        if 'lp' in coeffs:
+            data = sp_signal.sosfiltfilt(coeffs['lp'], data)
+        if 'notch' in coeffs:
+            b, a = coeffs['notch']
+            data = sp_signal.filtfilt(b, a, data)
+        return data
+
+    def _capture_coupling_state(self) -> dict:
+        snapshots = {}
+        for coupling_id, coupling in self._sim._coupling_models.items():
+            history = getattr(coupling, '_history', None)
+            snapshots[coupling_id] = {
+                'history': None if history is None else history.copy(),
+                'write_idx': getattr(coupling, '_write_idx', 0),
+            }
+        return snapshots
+
+    def _restore_coupling_state(self, snapshots: dict) -> None:
+        for coupling_id, snapshot in snapshots.items():
+            coupling = self._sim._coupling_models.get(coupling_id)
+            if coupling is None:
+                continue
+            history = snapshot.get('history')
+            coupling._history = None if history is None else history.copy()
+            coupling._write_idx = snapshot.get('write_idx', 0)
+
+    def _get_forward_series_for_heatmap(self, n_samples: int):
+        """为热力图分析生成全通道前向投影时间序列"""
+        if not (
+            self._sim.simulation_time > 0
+            and self._sim._mne_simulator
+            and self._sim._mne_simulator.is_ready()
+            and self._sim.patches
+        ):
+            return None
+
+        sr = self._sim.sampling_rate
+        dt = 1.0 / sr
+        min_samples = max(64, int(sr * 0.5))
+        n_samples = int(min(max(n_samples, min_samples), self._sim.buffer_size))
+        t_end = self._sim.simulation_time
+        t_start = max(0.0, t_end - n_samples * dt)
+        cache_key = (round(t_end, 4), n_samples)
+        if self._heatmap_forward_cache_key == cache_key and self._heatmap_forward_series is not None:
+            return self._heatmap_forward_series
+        t = np.linspace(t_start, t_end, n_samples, endpoint=False)
+        signal_state_snapshot = copy.deepcopy(self._sim._signal_states)
+        coupling_state_snapshot = self._capture_coupling_state()
+        try:
+            patch_signals = self._generate_patch_signals_batch(t, n_samples)
+            patch_signals = self._apply_coupling_batch(patch_signals, t, n_samples)
+            patch_data = self._build_patch_data(patch_signals, n_samples)
+            forward_series = self._sim._mne_simulator.simulate(
+                patch_data, t_start, n_samples
+            )
+            self._heatmap_forward_cache_key = cache_key
+            self._heatmap_forward_series = forward_series
+            return forward_series
+        except Exception as e:
+            logger.debug(f"热力图全通道投影失败: {e}")
+            return None
+        finally:
+            self._sim._signal_states.clear()
+            self._sim._signal_states.update(signal_state_snapshot)
+            self._restore_coupling_state(coupling_state_snapshot)
+
+    def _bandpass_for_analysis(self, data_uV: np.ndarray, sr: float, fmin: float, fmax: float) -> np.ndarray:
+        """零相位带通（分析窗口专用，不改变实时滤波状态）"""
+        from scipy import signal as sp_signal
+
+        data = np.asarray(data_uV, dtype=float)
+        if data.size < 16:
+            return data
+        nyquist = sr / 2.0
+        if fmax is None:
+            fmax = min(nyquist, 100.0)
+        fmax = min(fmax, nyquist * 0.999)
+        fmin = max(fmin, 0.05)
+        if fmax <= fmin:
+            return np.zeros_like(data)
+        low = fmin / nyquist
+        high = fmax / nyquist
+        cache_key = (round(float(sr), 6), round(float(fmin), 6), None if fmax is None else round(float(fmax), 6))
+        sos = self._analysis_filter_cache.get(cache_key)
+        if sos is None:
+            if high >= 1.0:
+                sos = sp_signal.butter(4, low, btype='highpass', output='sos')
+            else:
+                sos = sp_signal.butter(4, [low, high], btype='bandpass', output='sos')
+            self._analysis_filter_cache[cache_key] = sos
+        return sp_signal.sosfiltfilt(sos, data)
+
+    def _total_power_from_uV_series(self, series_uV: np.ndarray) -> float:
+        data = np.asarray(series_uV, dtype=float)
+        if data.size == 0:
+            return 0.0
+        return float(np.mean(data ** 2))
+
+    def _band_power_from_uV_series(self, series_uV, sr, fmin, fmax) -> float:
+        data = self._filter_window_offline(np.asarray(series_uV, dtype=float))
+        return self._band_power_from_filtered_uV_series(data, sr, fmin, fmax)
+
+    def _band_power_from_filtered_uV_series(self, series_uV, sr, fmin, fmax) -> float:
+        data = np.asarray(series_uV, dtype=float)
+        if fmax is None or (fmin, fmax) == HEATMAP_BAND_RANGES['broadband']:
+            return self._total_power_from_uV_series(data)
+        band_data = self._bandpass_for_analysis(data, sr, fmin, fmax)
+        return self._total_power_from_uV_series(band_data)
+
+    def _band_power_from_voltage_series(self, series_v, sr, fmin, fmax) -> float:
+        series_uV = np.asarray(series_v, dtype=float) * 1e6
+        return self._band_power_from_uV_series(series_uV, sr, fmin, fmax)
+
+    def _compute_channel_heatmap_power_arrays(
+        self,
+        channel_names,
+        n_samples: int,
+        sr: float,
+        fmin: float,
+        fmax: float,
+    ) -> tuple[list[str], np.ndarray, np.ndarray]:
+        min_samples = max(64, int(sr * 0.5))
+        names = []
+        powers = []
+        broadband = []
+        for ch_name in channel_names:
+            buf = self._sim.eeg_buffer.get(ch_name)
+            if buf is None or len(buf) == 0:
+                continue
+            take = min(n_samples, len(buf))
+            if take < min_samples:
+                continue
+            data = self._filter_window_offline(buf[-take:])
+            names.append(ch_name)
+            powers.append(self._band_power_from_filtered_uV_series(data, sr, fmin, fmax))
+            broadband.append(self._total_power_from_uV_series(data))
+        return (
+            names,
+            np.asarray(powers, dtype=float),
+            np.asarray(broadband, dtype=float),
+        )
+
+    def compute_heatmap_band_powers_for_topomap(self, n_samples: int) -> dict:
+        """计算频带功率地形图数据（0–1 归一化）。
+
+        有前向模型时优先使用其原生 EEG 电极位置，避免 10-10 名称
+        重映射到稀疏传感器造成的左右假不对称。
+        """
+        band_key = self._sim.signal_page.get_heatmap_band()
+        fmin, fmax = self._resolve_heatmap_band(band_key)
+        sr = self._sim.sampling_rate
+        min_samples = max(64, int(sr * 0.5))
+        n_samples = int(min(max(n_samples, min_samples), self._sim.buffer_size))
+
+        montage = None
+        if hasattr(self._sim, 'electrode_channels_page'):
+            montage = self._sim.electrode_channels_page.get_current_montage()
+
+        if montage is None:
+            names, powers, broadband = self._compute_channel_heatmap_power_arrays(
+                list(self._sim.selected_channels or []), n_samples, sr, fmin, fmax
+            )
+            return {
+                'mode': 'montage',
+                'powers': self._normalize_heatmap_powers(
+                    powers, band_key, broadband=broadband
+                )['powers'],
+                'names': names,
+                'band': band_key,
+            }
+
+        selected_names = list(self._sim.selected_channels or [])
+        if not selected_names:
+            selected_names = [ch for ch in montage.ch_names if ch in self._sim.eeg_buffer]
+        names, powers, broadband = self._compute_channel_heatmap_power_arrays(
+            selected_names, n_samples, sr, fmin, fmax
+        )
+        return self._normalize_heatmap_powers(
+            powers, band_key, names=names, broadband=broadband
+        )
+
+    def compute_heatmap_band_powers_from_forward_series(self, forward_series: dict) -> dict:
+        """使用已经生成好的全通道 forward 数据计算热力图，避免 UI 刷新时二次 forward。"""
+        if not forward_series or self._sim._mne_simulator is None:
+            return {'mode': 'montage', 'powers': np.asarray([]), 'names': [], 'band': 'alpha'}
+
+        import mne
+
+        band_key = self._sim.signal_page.get_heatmap_band()
+        fmin, fmax = self._resolve_heatmap_band(band_key)
+        sr = self._sim.sampling_rate
+        info = self._sim._mne_simulator.info
+        picks = mne.pick_types(info, meg=False, eeg=True, exclude=[])
+        powers = []
+        broadband = []
+        for pick in picks:
+            name = info['ch_names'][pick]
+            if name in forward_series:
+                series_uV = np.asarray(forward_series[name], dtype=float) * 1e6
+                series_uV = self._filter_window_offline(series_uV)
+                powers.append(self._band_power_from_filtered_uV_series(series_uV, sr, fmin, fmax))
+                broadband.append(self._total_power_from_uV_series(series_uV))
+            else:
+                powers.append(0.0)
+                broadband.append(0.0)
+        return self._normalize_heatmap_powers(
+            np.asarray(powers, dtype=float),
+            band_key,
+            mode='forward',
+            info=info,
+            broadband=np.asarray(broadband, dtype=float),
+        )
+
+    def compute_heatmap_band_powers(self, channel_names, n_samples: int) -> np.ndarray:
+        """按所选频带计算各通道功率（0–1 归一化），用于地形图"""
+        band_key = self._sim.signal_page.get_heatmap_band()
+        fmin, fmax = self._resolve_heatmap_band(band_key)
+        min_samples = max(64, int(self._sim.sampling_rate * 0.5))
+
+        powers = []
+        broadband = []
+        for ch_name in channel_names:
+            buf = self._sim.eeg_buffer.get(ch_name)
+            if buf is None or len(buf) == 0:
+                powers.append(0.0)
+                broadband.append(0.0)
+                continue
+            take = min(n_samples, len(buf))
+            if take < min_samples:
+                powers.append(0.0)
+                broadband.append(0.0)
+                continue
+            data = self._filter_window_offline(buf[-take:])
+            powers.append(
+                self._band_power_from_filtered_uV_series(
+                    data, self._sim.sampling_rate, fmin, fmax
+                )
+            )
+            broadband.append(self._total_power_from_uV_series(data))
+
+        powers = np.asarray(powers, dtype=float)
+        broadband = np.asarray(broadband, dtype=float)
+        return self._normalize_heatmap_powers(
+            powers, band_key, broadband=broadband
+        )['powers']
+
+    def _normalize_heatmap_powers(
+        self,
+        powers: np.ndarray,
+        band_key: str,
+        names=None,
+        mode: str = 'montage',
+        info=None,
+        broadband: np.ndarray | None = None,
+    ) -> dict:
+        """归一化频带功率供地形图显示（按频带独立缩放）"""
+        powers = np.asarray(powers, dtype=float)
+        max_power = float(np.max(powers)) if powers.size else 0.0
+        if (
+            band_key != 'broadband'
+            and broadband is not None
+            and broadband.size
+        ):
+            max_bb = float(np.max(broadband))
+            if max_bb > 0 and max_power / max_bb < HEATMAP_BAND_MIN_BB_RATIO:
+                display = np.zeros_like(powers)
+            elif max_bb > 0:
+                display = np.clip(powers / max_bb, 0.0, 1.0)
+            elif max_power > 0:
+                display = powers / max_power
+            else:
+                display = powers
+        elif max_power > 0:
+            display = powers / max_power
+        else:
+            display = powers
+        result = {
+            'mode': mode,
+            'powers': display,
+            'band': band_key,
+        }
+        if names is not None:
+            result['names'] = names
+        if info is not None:
+            result['info'] = info
+        return result

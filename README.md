@@ -5,90 +5,243 @@
 [![MNE](https://img.shields.io/badge/MNE-1.0+-orange.svg)](https://mne.tools/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An EEG signal simulation platform based on **PyQt6** and **MNE-Python**. Load source spaces from brain models, configure Patches and coupling, project through MNE forward models, and visualize or export real-time multi-channel EEG.
+EEG Simulator is a desktop EEG simulation tool built with **PyQt6** and **MNE-Python**. It lets you prepare an anatomical model, define cortical signal sources, configure electrodes and output, then run a real-time EEG simulation with waveform, FFT, and topomap views.
 
-[中文文档](README_zh.md) · [Detailed UI docs](docs/README.md)
-
----
-
-## ✨ Features
-
-| Feature | Description |
-|---------|-------------|
-| 🧠 **Real Brain Models** | Load MNE standard brain models (e.g., sample dataset) with MRI slice visualization |
-| 🎯 **Visual Source Selection** | Manually select on MRI slices or batch select by anatomical labels (Atlas) |
-| 📊 **Flexible Signal Config** | Patch waveforms: sine, cosine, ERP, Gaussian, Gamma, oscillation, custom |
-| 🔗 **Coupling Models** | Linear / nonlinear / delayed coupling; optional MNE geometry-based weights |
-| 🔊 **Noise Management** | White, pink, 1/f, brown, line (50/60 Hz), EOG, EMG, ECG — stackable instances |
-| 📡 **Live & File Output** | LSL streaming; EDF / FIF export with duration limits |
-| 📈 **Real-time Signal UI** | Multi-channel waveforms, optional topomap heatmap & FFT, HP/LP/notch filters |
-| 📁 **Project Management** | Save/load projects (patches, coupling, noise, filters, montage, output settings) |
-| 🎨 **Modern UI** | Dark/light themes; Chinese/English interface |
-| ⚙️ **BEM Model** | Configure brain/skull/scalp conductivity (optional BEM workflow) |
+[中文文档](README_zh.md) | [Detailed UI docs](docs/README.md)
 
 ---
 
-## 📁 Project Structure
+## Features
 
-```
-EEG_Simulation/
-├── eeg_simulator/                 # Main package
-│   ├── core/                      # Simulation core
-│   │   ├── simulator/             # Main simulator (composable services)
-│   │   │   ├── app.py             # EEGSimulator main class
-│   │   │   ├── simulation.py      # Start/stop and main loop
-│   │   │   ├── buffers.py         # Signal buffers
-│   │   │   └── ...                # UI / project / MNE / patch ops
-│   │   ├── simulator_nav.py       # Backward-compatible re-export
-│   │   ├── output_sink.py         # LSL / EDF / FIF output
-│   │   ├── signal_engine.py       # Signal generation engine
-│   │   └── mne_simulator.py       # MNE integration simulator
-│   ├── models/                    # Data models
-│   │   ├── patch.py               # Patch model (dipole group management)
-│   │   ├── coupling.py            # Coupling models
-│   │   ├── mne_coupling.py        # MNE coupling engine
-│   │   └── signal.py              # Signal generators
-│   ├── ui/                        # User interface
-│   │   ├── styles.py              # QSS styles
-│   │   ├── themes.py              # Theme management (dark/light)
-│   │   ├── widgets/               # Basic widgets
-│   │   ├── panels/                # Configuration panels
-│   │   └── dialogs/               # Dialogs
-│   ├── utils/                     # Utility modules
-│   │   ├── config_manager.py      # Configuration management (SQLite)
-│   │   ├── project_manager.py     # Project management
-│   │   ├── mne_loader.py          # MNE data loading & channel mapping
-│   │   ├── waveform_parser.py     # Safe custom waveform parsing
-│   │   ├── i18n.py                # Internationalization
-│   │   └── logger.py              # Logging management
-│   ├── __init__.py
-│   └── __main__.py                # Module entry
-├── docs/                          # UI & feature documentation
-├── tests/                         # Unit tests
-├── main.py                        # Launch script
-├── requirements.txt               # Dependencies
-├── README.md                      # This file (English)
-└── README_zh.md                   # Chinese documentation
+| Area | What It Does |
+| --- | --- |
+| Model preparation | Load MNE source spaces, configure electrode montage, generate/load forward models, and optionally build BEM models |
+| Signal sources | Create patches from dipoles or atlas labels; configure sine, cosine, ERP, Gaussian, Gamma, oscillation, or custom waveforms |
+| Coupling | Configure linear, nonlinear, delayed, or MNE geometry-weighted coupling between patches |
+| Noise | Add stackable white, pink, 1/f, brown, line, EOG, EMG, and ECG noise instances |
+| Electrodes and channels | Select montage and choose the channels used for simulation, output, and display |
+| Real-time display | Show filtered waveforms, FFT spectrum, and a forward-model-based topomap heatmap |
+| Output | Stream through LSL or export EDF/FIF files with optional duration limits |
+| Project management | Save and reload patches, coupling, noise, filters, montage, model paths, and output settings |
+| UI | Light/dark themes and Chinese/English interface |
+
+---
+
+## Current Workflow
+
+The application is organized around a workflow-first layout:
+
+```text
+Model Preparation -> Signal Sources -> Electrodes & Channels -> Noise -> Output -> Real-time Signal
 ```
 
+### 1. Model Preparation
+
+Use this page to prepare the physical model used by the simulation.
+
+- Load or create the source space.
+- Configure electrode montage.
+- Generate/load the forward model.
+- Generate a BEM model if your workflow needs one.
+- BEM generation status is shown below the BEM button.
+
+Recommended order:
+
+```text
+Load source space -> Generate/load BEM if needed -> Select montage -> Generate forward model
+```
+
+If the source space and forward model are not perfectly aligned, the simulator can snap source dipoles to nearby valid forward vertices and logs the snapping distance.
+
+<p align="center">
+  <img src="docs/pic/model.png" alt="Model Preparation page" width="900">
+</p>
+
+### 2. Signal Sources
+
+Use patches to describe cortical source activity.
+
+<p align="center">
+  <img src="docs/pic/source.png" alt="Signal Sources page" width="900">
+</p>
+
+- A patch is a group of dipoles that share waveform settings.
+- Patches can be created manually from selected dipoles or from anatomical labels.
+- Supported waveforms include sine, cosine, ERP, Gaussian, Gamma, transient oscillation, and custom samples.
+- Patch amplitude is configured in nAm. The default MNE current scale is `1e-9 A/nAm`.
+
+<p align="center">
+  <img src="docs/pic/patch.jpg" alt="Patch configuration dialog" width="900">
+</p>
+
+### 3. Coupling
+
+Patch-to-patch coupling supports:
+
+| Type | Formula |
+| --- | --- |
+| Linear | `target += strength * source` |
+| Nonlinear | `target += strength * tanh(source)` |
+| Delayed | `target += strength * source(t-delay)` |
+| MNE weighted | Uses geometry-derived patch weights where available |
+
+<p align="center">
+  <img src="docs/pic/patchCouping.jpg" alt="Patch coupling configuration" width="900">
+</p>
+
+### 4. Electrodes & Channels
+
+Select the montage and channels used by the run. The montage determines sensor positions for the forward model and heatmap.
+
+<p align="center">
+  <img src="docs/pic/electrode.png" alt="Electrodes and Channels page" width="900">
+</p>
+
+### 5. Noise
+
+Noise configuration is separated from signal-source configuration.
+
+<p align="center">
+  <img src="docs/pic/noise.png" alt="Noise page" width="900">
+</p>
+
+| Type | Description |
+| --- | --- |
+| White | Flat-spectrum random noise |
+| Pink | 1/f noise |
+| 1/f | Fractional noise with configurable exponent |
+| Brown | 1/f^2 random-walk-like noise |
+| Line | 50/60 Hz power-line interference |
+| EOG | Blink and eye-movement artifacts |
+| EMG | Muscle artifacts |
+| ECG | Cardiac artifacts |
+
+Current implementation note: noise is generated independently per channel. This is useful for stress-testing denoising pipelines, but spatially correlated artifact models are still planned. See [docs/noise_spatial_model_todo.md](docs/noise_spatial_model_todo.md).
+
+<p align="center">
+  <img src="docs/pic/noise_cfg.png" alt="Noise configuration dialog" width="900">
+</p>
+
+### 6. Output
+
+Configure sampling rate, output format, output directory, file name, and duration.
+
+| Format | Description |
+| --- | --- |
+| LSL | Live stream through Lab Streaming Layer |
+| EDF | EDF file export through pyEDFlib |
+| FIF | MNE-native raw file export |
+
+<p align="center">
+  <img src="docs/pic/output.png" alt="Output page" width="900">
+</p>
+
+### 7. Real-time Signal
+
+The real-time page shows:
+
+- Multi-channel filtered waveforms.
+- High-pass, low-pass, and 50/60 Hz notch filters.
+- Optional FFT spectrum.
+- Optional topomap heatmap.
+
+The topomap heatmap uses forward-model sensor positions when a forward model is available. It is computed from the forward-projected EEG channels, so it remains consistent with the physical model rather than only the currently selected display channels.
+
+<p align="center">
+  <img src="docs/pic/realtime.png" alt="Real-time Signal page" width="900">
+</p>
+
 ---
 
-## 🚀 Quick Start
+## Real-time Engine Design
+
+The current real-time engine separates data generation from UI rendering:
+
+1. A background `QThread` generates approximately **1 second** of EEG data at a time.
+2. Generated chunks are stored in an internal queue.
+3. The UI timer consumes a fixed number of samples per frame:
+
+```text
+samples_per_frame = sampling_rate / simulation_fps
+```
+
+For example, at `1000 Hz` and `20 FPS`, each UI frame consumes about `50` samples.
+
+This design avoids calling the forward model on every UI refresh. It also keeps rendering responsive even when generation is heavier than a single frame.
+
+### Performance Notes
+
+- Forward projection uses an optimized sparse path when possible: only active dipole columns of the forward matrix are projected.
+- If the forward structure is not compatible with the sparse path, the simulator falls back to the safe MNE-compatible path.
+- Waveform display is decimated for rendering only; generated and exported data keep the original sampling rate.
+- FFT is capped to a lightweight analysis window for real-time display.
+- Topomap power is prepared in the worker from forward-projected data, while the UI only renders the latest result.
+- Slow-path logs include worker, projection, noise, buffer, plot, and heatmap timing.
+
+Example log:
+
+```text
+实时性能: samples=50 queued=1.20s worker=...ms(source=... project=... heatmap_power=... noise=...) ui=...ms(buffer=... plot=... heatmap=...)
+```
+
+---
+
+## Forward Model and Heatmap Behavior
+
+When a forward model is available:
+
+- Patch dipoles are projected through the forward solution.
+- The simulator maps UI channel names to forward-model channel names.
+- If a selected dipole vertex is missing from the forward source space, the simulator can snap it to a nearby valid forward vertex and logs the distance.
+- The real-time heatmap uses the forward model's EEG sensor positions.
+
+When no forward model is available:
+
+- The app warns that no forward model is ready.
+- A deterministic simplified projection is used as a fallback.
+- The fallback is useful for UI testing and rough demos, but not for quantitative interpretation.
+
+---
+
+## Project Structure
+
+```text
+eeg_simulator/
+  core/
+    mne_simulator.py          # Forward projection and MNE integration
+    output_sink.py            # LSL / EDF / FIF output
+    signal_engine.py          # Waveform and noise generation
+    simulator/
+      app.py                  # Main window state
+      simulation.py           # Real-time queue, worker, start/stop loop
+      signal.py               # Projection, filtering, FFT, heatmap power
+      buffers.py              # Buffer sizing and sampling-rate sync
+      mne.py                  # Model-generation helpers
+      patch_ops.py            # Patch/coupling/noise operations
+  models/                     # Patch, dipole, coupling, signal models
+  ui/                         # Themes, widgets, panels, dialogs
+  utils/                      # Config, project, i18n, logging, MNE loading
+docs/                         # UI documentation
+tests/                        # Unit tests
+main.py                       # Launch script
+```
+
+---
+
+## Quick Start
 
 ### Requirements
 
 - Python 3.8+
-- Windows / Linux / macOS
-- 4GB+ RAM (8GB recommended)
+- Windows, Linux, or macOS
+- 4 GB RAM minimum, 8 GB recommended
 
-### Installation
+### Install
 
 ```bash
-# 1. Clone repository
 git clone <repository-url>
-cd EEG_Simulation
+cd eeg-simulator
 
-# 2. Create virtual environment (recommended)
 python -m venv .venv
 
 # Windows
@@ -97,380 +250,58 @@ python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
 
-# 3. Install dependencies
 pip install -r requirements.txt
-
-# 4. Download MNE Sample dataset (auto-download on first run)
 python -c "import mne; mne.datasets.sample.data_path()"
 ```
 
 ### Launch
 
 ```bash
-# Method 1: Using launch script
 python main.py
 
-# Method 2: Using module
+# or
 python -m eeg_simulator
 ```
 
 ---
 
-## 📖 Usage Guide
-
-### Basic Workflow
-
-```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ Load Source │ -> │ Select      │ -> │ Configure   │ -> │ Run         │
-│ Space       │    │ Sources     │    │ Signals     │    │ Simulation  │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-```
-
-#### 1. Load Source Space
-- Click **"Load MNE Sample Source Space"** to load sample data
-- Or click **"Load from File"** to load custom `-src.fif` files
-
-<p align="center">
-  <img src="docs/pic/source_cfg.jpg" alt="Source Config page" width="900">
-</p>
-
-#### 2. Select Signal Sources
-- Click **"Select Source Points..."** to open the MRI slice visual selector
-- Click on MRI slices to select individual points (green=left, red=right, yellow star=selected)
-- Or check regions in **"Anatomy Labels"** to batch add all source points in selected regions
-
-<p align="center">
-  <img src="docs/pic/patch.jpg" alt="Patch Manager" width="900">
-</p>
-
-#### 3. Configure Signals
-- **Patch Manager**: Create and manage Patches (adjacent dipole groups)
-- **Signal Generators**: Configure parameters for sine, ERP, Gamma, etc.
-- **Coupling Models**: Define linear/non-linear/delayed connections between Patches
-- **Noise Settings**: Add white noise, physiological noise, etc.
-
-<p align="center">
-  <img src="docs/pic/noise.jpg" alt="Noise Manager" width="900">
-</p>
-
-#### 4. Set BEM Model (Optional)
-- Set conductivity for brain, skull, and scalp
-- Click **"Generate BEM Model"**
-
-#### 5. Electrode & Channels
-- Choose a 10–20 (or other) montage and select channels for simulation/display
-
-<p align="center">
-  <img src="docs/pic/channel.jpg" alt="Electrode & Channels page" width="900">
-</p>
-
-#### 6. Output Settings
-- Set sampling rate (default 1000 Hz)
-- Choose output: **LSL**, **EDF**, or **FIF**; optional duration limit (auto-stop)
-- Start/stop simulation from this page
-
-<p align="center">
-  <img src="docs/pic/output.jpg" alt="Output Settings page" width="900">
-</p>
-
-#### 7. Real-time Signal
-- View filtered multi-channel waveforms (time window 1–60 s)
-- Optional **topomap heatmap** and **FFT** side panels
-- Filters: highpass, lowpass, **50/60 Hz notch**; changing filters clears the display buffer
-
-<p align="center">
-  <img src="docs/pic/realtime.jpg" alt="Real-time Signal page" width="900">
-</p>
-
-> **Navigation:** four main pages — Source Config → Electrode & Channels → Output → Real-time Signal. Patch / Coupling / Noise managers open from the Source Config page.
-
----
-
-## 🔧 Core Concepts
-
-### Patch Model
-
-**Patch** is the core abstraction for EEG signal simulation, representing a functional region in the brain:
-
-- Contains one **anchor dipole** and adjacent dipoles
-- All dipoles share the same **waveform settings**
-- Supports waveform types: **sin**, **cos**, **ERP**, **Gaussian**, **Gamma**, **oscillation**, **custom**
-- Waveform **amplitude** is in **nAm** (nanoamperes). **Amplitude scale** (default `1 × 10⁻⁹ A/nAm`) converts to MNE source current.
-- Scalp EEG after forward projection is typically **μV** scale — e.g. 10–20 nAm often yields a few μV at frontal electrodes, depending on source location and montage.
-
-```python
-from eeg_simulator.models import Patch
-
-patch = Patch(
-    id="patch_1",
-    label_name="superiortemporal-lh",
-    hemi="lh",
-    waveform_type="sin",
-    waveform_params={"frequency": 10, "amplitude": 20},  # 20 nAm
-)
-patch.amplitude_scale = 1e-9  # default unit conversion for MNE
-```
-
-### Coupling Models
-
-Define signal connection relationships between Patches:
-
-| Coupling Type | Formula | Description |
-|--------------|---------|-------------|
-| Linear | `target += strength * source` | Direct signal transfer |
-| Non-linear | `target += strength * tanh(source)` | Saturating non-linearity |
-| Delayed | `target += strength * source(t-delay)` | Time-delayed connection |
-
-### Signal Types
-
-| Type | Description | Parameters |
-|------|-------------|------------|
-| Sine / Cos | Oscillatory | frequency, amplitude (nAm), phase |
-| ERP | Event-related potential | frequency, latency, width, polarity |
-| Gaussian | Gaussian-modulated carrier | frequency, sigma, center |
-| Gamma | Gamma-shaped envelope | frequency, alpha, beta |
-| Oscillation | Transient oscillation burst | freq, amp, center, width |
-| Custom | User-defined sample list | frequency, data array |
-
-### Forward projection
-
-- With a loaded **`-fwd.fif`**, signals use **MNE `apply_forward`** (recommended).
-- Without forward model, a **deterministic simplified projection** is used and a warning is shown — not for quantitative studies.
-
-### Output
-
-| Format | Description |
-|--------|-------------|
-| **LSL** | Live stream via Lab Streaming Layer (`pylsl`) |
-| **EDF** | European Data Format file (`pyedflib`) |
-| **FIF** | MNE native raw file |
-
----
-
-## 🔊 Noise Management
-
-The system supports multiple noise types and allows stacking multiple noise instances.
-
-> **Implementation note:** noise is currently generated **independently per channel** (good for stress-testing denoising, but not fully realistic for EOG/line noise). A spatially correlated model is planned — see [docs/noise_spatial_model_todo.md](docs/noise_spatial_model_todo.md).
-
-### Noise Types
-
-| Type | Description | Configurable Parameters |
-|------|-------------|------------------------|
-| **White** | White noise (flat spectrum) | Amplitude, Cutoff frequency |
-| **Pink** | Pink noise (1/f spectrum) | Amplitude |
-| **1/f** | Fractional noise | Amplitude, Exponent |
-| **Brown** | Brown noise (1/f² spectrum) | Amplitude |
-| **Line** | Power line interference | Amplitude, Frequency (50/60 Hz) |
-| **EOG** | Electrooculogram artifacts | Amplitude, Cutoff frequency, Blink rate |
-| **EMG** | Electromyogram artifacts | Amplitude, Cutoff frequency |
-| **ECG** | Electrocardiogram artifacts | Amplitude, Heart rate (BPM) |
-
-#### Physiological Noise Details
-
-**ECG (Electrocardiogram Artifacts)**
-- Simulates ECG waveforms including P wave, QRS complex, and T wave
-- Uses a simplified physiological model to generate periodic heartbeat signals based on heart rate
-- Typical amplitude: 20-50 μV
-- Suitable for simulating cardiac interference in EEG
-
-**EOG (Electrooculogram Artifacts)**
-- Simulates low-frequency transient interference from eye blinks and movements
-- Blink waveform: biphasic pulse with rapid rise and slow decay
-- Configurable blink rate (default 0.5 Hz, approximately one blink every 2 seconds)
-- Includes slow eye movement baseline drift (0.1-0.5 Hz)
-- Typical amplitude: 50-200 μV (blink artifacts are typically strong)
-
-**EMG (Electromyogram Artifacts)**
-- Simulates high-frequency, non-periodic noise from muscle activity
-- Multi-band synthesis: 10-30 Hz (large motor units), 30-100 Hz (primary energy), 100-200 Hz (fast motor units)
-- Simulates burst activity (muscle contraction periods)
-- Typical amplitude: 10-30 μV
-
-### Noise Spectral Characteristics
-
-| Noise Type | Power Spectral Density | Spectral Feature | Generation Method |
-|-----------|----------------------|-----------------|------------------|
-| **White** | $P(f) = C$ | Flat spectrum | Pure random sequence |
-| **Pink** | $P(f) = C/f$ | 1/f decay | Integration of white noise |
-| **Brown** | $P(f) = C/f^2$ | 1/f² decay | Double integration of white noise |
-| **1/f** | $P(f) = C/f^\alpha$ | Adjustable α decay | Fractional integration filter |
-
-#### White Noise
-
-**Spectral Feature**: **Flat** - Equal energy at all frequencies
-
-| Property | Description |
-|----------|-------------|
-| **Physical Meaning** | Like white light containing all colors, equal energy at all frequencies |
-| **Sounds Like** | Hissing sound, like TV static |
-| **EEG Relevance** | Simulates electronic thermal noise, quantization noise |
-
-**FFT Plot**: Approximately horizontal line
-
-#### Pink Noise
-
-**Spectral Feature**: **1/f decay** - Equal energy per octave
-
-| Property | Description |
-|----------|-------------|
-| **Physical Meaning** | High energy at low frequencies, low at high, decaying as 1/f |
-| **Sounds Like** | "Softer", like wind or flowing water |
-| **EEG Relevance** | Close to real EEG background (EEG exhibits 1/f characteristics) |
-
-**Energy Distribution**:
-- 1-2 Hz: Energy = 1
-- 2-4 Hz: Energy = 0.5 (same total as 1-2Hz band)
-- 4-8 Hz: Energy = 0.25
-
-**FFT Plot**: Monotonically decreasing left to right (slope ~ -10 dB/octave)
-
-#### Brown Noise
-
-**Spectral Feature**: **1/f² decay** - Low frequencies absolutely dominant
-
-| Property | Description |
-|----------|-------------|
-| **Physical Meaning** | Faster decay than pink noise, random walk characteristics |
-| **Sounds Like** | Deep rumbling sound |
-| **EEG Relevance** | Simulates electrode polarization drift, slow baseline wander |
-
-**Comparison with White Noise**:
-- White: Adjacent samples independent
-- Brown: Strong correlation (random walk)
-
-**FFT Plot**: Steep decrease (slope ~ -20 dB/octave)
-
-#### 1/f Noise (Fractional)
-
-**Spectral Feature**: **1/f^α decay** (adjustable α, 0 ≤ α ≤ 2)
-
-| α Value | Noise Type | Spectral Slope |
-|---------|-----------|----------------|
-| 0 | White | 0 dB/octave |
-| 0.5 | Intermediate | -5 dB/octave |
-| 1.0 | Pink | -10 dB/octave |
-| 1.5 | Intermediate | -15 dB/octave |
-| 2.0 | Brown | -20 dB/octave |
-
-**Usage**: Fine-tune background noise spectral characteristics as needed
-
-#### Spectral Comparison Diagram
-
-```
-Amplitude (dB)
-  |
-0 |    White  ─────────────────────────
-  |    Pink   ─────╲
-  |    1/f (α=1.5) ──────╲
-  |    Brown  ───────────╲
--20|                       ╲
-  |                         ╲
--40|                           ╲_____
-  |
-  +------------------------------------
-     1Hz   10Hz   100Hz   1000Hz   Frequency
-```
-
-### Usage
-
-1. Click **"Noise Settings"** button to open the noise manager
-2. Select noise type in the right panel and configure parameters
-3. Click **"Add"** to add the noise instance to the list
-4. Multiple instances of the same type can be added (e.g., white noise with different amplitudes)
-5. View and manage added noises in the left panel
-6. Click **"OK"** to apply the configuration
-
-### Noise Parameters
-
-| Parameter | Description | Applicable to |
-|-----------|-------------|---------------|
-| **Amplitude** | Noise intensity (μV) | All noise types |
-| **Cutoff Frequency** | Low-pass filter cutoff (Hz) | White, EOG, EMG |
-| **Exponent** | Spectral exponent for 1/f noise | 1/f noise |
-| **Line Frequency** | 50 Hz or 60 Hz | Line noise |
-| **Heart Rate** | Heartbeat frequency (BPM) | ECG noise |
-| **Blink Rate** | Blinks per second | EOG noise |
-
----
-
-## 🎮 Keyboard Shortcuts
-
-| Shortcut | Function |
-|----------|----------|
-| `Ctrl+N` | New Project |
-| `Ctrl+O` | Open Project |
-| `Ctrl+S` | Save Project |
-| `Ctrl+Shift+S` | Save As |
-
----
-
-## ⚙️ Settings
-
-Program settings are automatically saved to `~/.eegs/config.db` (SQLite database):
-
-- Language (Chinese/English)
-- Theme (Dark/Light)
-- Default sampling rate
-- Default project directory
-- Filter Order
-
----
-
-## 🧪 Testing
+## Testing
 
 ```bash
-# Recommended: unit tests (unittest + pytest)
-python tests/run_tests.py
+python -m pytest -q
+```
 
-# Pytest only
-python -m pytest tests/
+Optional scripts:
 
-# Optional scripts
+```bash
 python tests/test_compare_mne.py
 python tests/test_noise_visualization.py
 ```
 
-CI runs `python tests/run_tests.py` on push/PR (see `.github/workflows/tests.yml`).
+---
 
-### Noise Visualization Test
+## Settings
 
-Run `test_noise_visualization.py` to generate waveform and spectrum comparison plots for all noise types:
+User settings are stored under `~/.eegs/config.db`:
 
-- **Noise Overview** (`tests/noise_plots/noise_overview.png`): Time-domain waveforms + spectrum comparison for 8 noise types
-- **Physiological Noise Details** (`tests/noise_plots/noise_detailed_detailed.png`): Parameter variation comparison for ECG/EOG/EMG
+- Language
+- Theme
+- Default sampling rate
+- Default project directory
+- Filter order
+- Heatmap refresh interval
 
 ---
 
-## 📚 Dependencies
-
-See `requirements.txt` for pinned versions.
-
-- **GUI**: [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) ≥ 6.0
-- **Signal processing**: [NumPy](https://numpy.org/) ≥ 1.20, [SciPy](https://scipy.org/) ≥ 1.7, [MNE-Python](https://mne.tools/) ≥ 1.0
-- **Visualization**: [pyqtgraph](http://www.pyqtgraph.org/) ≥ 0.13, [Matplotlib](https://matplotlib.org/) ≥ 3.5
-- **Brain imaging**: [NiBabel](https://nipy.org/nibabel/) 5.4
-- **Export / streaming**: [pyEDFlib](https://pyedflib.readthedocs.io/) 0.1.42, [pylsl](https://github.com/labstreaminglayer/liblsl-Python) ≥ 1.16
-- **Tests**: [pytest](https://pytest.org/) ≥ 7.0
-
----
-
-## 📄 License
+## License
 
 [MIT License](LICENSE)
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- [MNE-Python](https://mne.tools/) - Powerful EEG data analysis tools
-- [PyQt](https://www.riverbankcomputing.com/software/pyqt/) - Qt bindings for Python
-- [pyqtgraph](http://www.pyqtgraph.org/) - High-performance scientific plotting
-- [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/) - Brain imaging analysis software
-
----
-
-<p align="center">
-  <sub>Built with ❤️ for neuroscience research</sub>
-</p>
+- [MNE-Python](https://mne.tools/)
+- [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
+- [pyqtgraph](http://www.pyqtgraph.org/)
+- [FreeSurfer](https://surfer.nmr.mgh.harvard.edu/)

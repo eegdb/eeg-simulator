@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QFrame, QSizePolicy, QSplitter, QComboBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from ..themes import get_color
+from ..themes import CHECKMARK_ICON, get_color, get_theme
 from ..widgets.navigation_view import NavigationPage
 from ..widgets.head_layout import HeatmapOverlayWidget
 from ...utils import tr
@@ -24,6 +24,58 @@ def _add_equal_width_cells(parent_layout, cell_widgets_list):
             cell_layout.addWidget(widget)
         cell_layout.addStretch()
         parent_layout.addWidget(cell, 1)
+
+def _strong_checkbox_style():
+    theme = get_theme()
+    is_light = theme.get('name') == 'light'
+    border = '#0f172a' if is_light else '#d4d4d8'
+    bg = '#ffffff' if is_light else '#18181b'
+    hover_bg = '#f8fafc' if is_light else '#27272a'
+    disabled_border = '#94a3b8' if is_light else '#52525b'
+    checkmark = CHECKMARK_ICON
+    return f"""
+        QCheckBox {{
+            color: {get_color('text_main')};
+            spacing: 8px;
+            background: transparent;
+        }}
+        QCheckBox::indicator {{
+            width: 16px;
+            height: 16px;
+            min-width: 16px;
+            min-height: 16px;
+            max-width: 16px;
+            max-height: 16px;
+            border-radius: 3px;
+            border: 2px solid {border};
+            background-color: {bg};
+            image: none;
+        }}
+        QCheckBox::indicator:unchecked {{
+            border: 2px solid {border};
+            background-color: {bg};
+            image: none;
+        }}
+        QCheckBox::indicator:unchecked:hover {{
+            border-color: {get_color('border_focus')};
+            background-color: {hover_bg};
+        }}
+        QCheckBox::indicator:checked {{
+            border: 2px solid {get_color('accent')};
+            background-color: {get_color('accent')};
+            image: url({checkmark});
+        }}
+        QCheckBox::indicator:checked:hover {{
+            border-color: {get_color('accent_hover')};
+            background-color: {get_color('accent_hover')};
+            image: url({checkmark});
+        }}
+        QCheckBox::indicator:disabled {{
+            border-color: {disabled_border};
+            background-color: {get_color('bg_input')};
+        }}
+    """
+
 
 def configure_plot_for_zoom(plot):
     """配置 PlotItem 支持滚轮缩放，禁用拖动"""
@@ -94,6 +146,7 @@ class SignalPage(NavigationPage):
         
         self.plot_items = {}
         self.plot_curves = {}
+        self._waveform_x_range_plot = None
         
         self._setup_content()
     
@@ -114,7 +167,7 @@ class SignalPage(NavigationPage):
         self.highpass_spin.setRange(0, 100)
         self.highpass_spin.setValue(0.5)
         self.highpass_spin.setDecimals(1)
-        self.highpass_spin.setFixedWidth(52)
+        self.highpass_spin.setFixedWidth(82)
         self.highpass_spin.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
@@ -124,7 +177,7 @@ class SignalPage(NavigationPage):
         self.lowpass_spin.setRange(0, 500)
         self.lowpass_spin.setValue(100)
         self.lowpass_spin.setDecimals(1)
-        self.lowpass_spin.setFixedWidth(52)
+        self.lowpass_spin.setFixedWidth(82)
         self.lowpass_spin.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
@@ -187,6 +240,7 @@ class SignalPage(NavigationPage):
         self.show_heatmap_cb.setChecked(False)
         self.show_fft_cb = QCheckBox(tr('label_show_fft'))
         self.show_fft_cb.setChecked(False)
+        self._apply_checkbox_styles()
         _add_equal_width_cells(side_view_layout, [
             [self.show_heatmap_cb],
             [self.show_fft_cb],
@@ -234,7 +288,17 @@ class SignalPage(NavigationPage):
         self.heatmap_group.setFixedWidth(270)
         heatmap_layout = QVBoxLayout(self.heatmap_group)
         heatmap_layout.setContentsMargins(4, 4, 4, 4)
-        heatmap_layout.setSpacing(0)
+        heatmap_layout.setSpacing(4)
+
+        band_layout = QHBoxLayout()
+        self.heatmap_band_label = QLabel(tr('label_heatmap_band'))
+        band_layout.addWidget(self.heatmap_band_label)
+        self.heatmap_band_combo = QComboBox()
+        self.heatmap_band_combo.setToolTip(tr('tooltip_heatmap_band'))
+        self._populate_heatmap_band_combo()
+        band_layout.addWidget(self.heatmap_band_combo, 1)
+        heatmap_layout.addLayout(band_layout)
+        self.heatmap_band_combo.currentIndexChanged.connect(self._on_heatmap_band_changed)
         
         self.heatmap_widget = HeatmapOverlayWidget()
         self.heatmap_widget.setFixedSize(250, 250)  # 固定大小
@@ -290,6 +354,7 @@ class SignalPage(NavigationPage):
         self.plot_widget.clear()
         self.plot_items.clear()
         self.plot_curves.clear()
+        self._waveform_x_range_plot = None
         
         if not channels:
             # 显示提示信息
@@ -311,9 +376,15 @@ class SignalPage(NavigationPage):
         
         # 为每个通道创建子图
         n_channels = len(channels)
+        first_plot = None
         for i, ch_name in enumerate(channels):
             # 使用支持滚轮缩放的 PlotItem
             plot = create_zoomable_plot(self.plot_widget, row=i, col=0)
+            if first_plot is None:
+                first_plot = plot
+                self._waveform_x_range_plot = plot
+            else:
+                plot.setXLink(first_plot)
             
             # 设置 ViewBox 背景色
             plot.getViewBox().setBackgroundColor(get_color('bg_card'))
@@ -335,6 +406,8 @@ class SignalPage(NavigationPage):
             # 创建曲线
             pen = pg.mkPen(color=get_color('accent'), width=1.5)
             curve = plot.plot(pen=pen)
+            curve.setClipToView(True)
+            curve.setDownsampling(auto=True, method='peak')
             
             self.plot_items[ch_name] = plot
             self.plot_curves[ch_name] = curve
@@ -354,6 +427,34 @@ class SignalPage(NavigationPage):
 
     def is_heatmap_enabled(self) -> bool:
         return self.show_heatmap_cb.isChecked()
+
+    def _populate_heatmap_band_combo(self, select_key=None):
+        """填充热力图频带下拉列表"""
+        if select_key is None and hasattr(self, 'heatmap_band_combo'):
+            select_key = self.get_heatmap_band()
+        self.heatmap_band_combo.blockSignals(True)
+        self.heatmap_band_combo.clear()
+        for key in ('broadband', 'delta', 'theta', 'alpha', 'beta', 'gamma'):
+            self.heatmap_band_combo.addItem(tr(f'band_{key}'), key)
+        if select_key:
+            idx = self.heatmap_band_combo.findData(select_key)
+            if idx >= 0:
+                self.heatmap_band_combo.setCurrentIndex(idx)
+        self.heatmap_band_combo.blockSignals(False)
+
+    def get_heatmap_band(self) -> str:
+        if not hasattr(self, 'heatmap_band_combo'):
+            return 'alpha'
+        key = self.heatmap_band_combo.currentData()
+        return key if key else 'alpha'
+
+    def _on_heatmap_band_changed(self, _index=None):
+        """切换频带后立即刷新地形图"""
+        if not self.is_heatmap_enabled():
+            return
+        sim = self.parent_simulator
+        if sim.simulation_time > 0 or sim.is_running:
+            sim.simulation._update_heatmap_from_simulation()
 
     def is_fft_enabled(self) -> bool:
         return self.show_fft_cb.isChecked()
@@ -376,18 +477,23 @@ class SignalPage(NavigationPage):
 
     def update_waveform_plots(self, t_display, channel_data: dict):
         """更新各通道波形；开启自动占满时按数据动态缩放 Y 轴"""
+        x_range = None
+        if len(t_display) > 1:
+            x_range = (float(t_display[0]), float(t_display[-1]))
+        elif len(t_display) == 1:
+            x_range = (float(t_display[0]) - 0.5, float(t_display[0]) + 0.5)
+
+        if x_range is not None and self._waveform_x_range_plot is not None:
+            self._waveform_x_range_plot.setXRange(x_range[0], x_range[1], padding=0)
+
         for ch_name, data in channel_data.items():
             curve = self.plot_curves.get(ch_name)
             if curve is None:
                 continue
-            curve.setData(t_display, data)
+            curve.setData(t_display, data, skipFiniteCheck=True)
             plot = self.plot_items.get(ch_name)
             if plot is None or len(data) == 0:
                 continue
-            if len(t_display) > 1:
-                plot.setXRange(float(t_display[0]), float(t_display[-1]), padding=0)
-            elif len(t_display) == 1:
-                plot.setXRange(float(t_display[0]) - 0.5, float(t_display[0]) + 0.5, padding=0)
             if not self.is_waveform_autoscale():
                 continue
             self._set_y_range_from_data(plot, data)
@@ -461,6 +567,7 @@ class SignalPage(NavigationPage):
             'time_window': self.time_window_spin.value(),
             'show_heatmap': self.is_heatmap_enabled(),
             'show_fft': self.is_fft_enabled(),
+            'heatmap_band': self.get_heatmap_band(),
             'waveform_autoscale': self.is_waveform_autoscale(),
         }
 
@@ -485,6 +592,8 @@ class SignalPage(NavigationPage):
             self.show_heatmap_cb.setChecked(bool(params['show_heatmap']))
         if 'show_fft' in params:
             self.show_fft_cb.setChecked(bool(params['show_fft']))
+        if 'heatmap_band' in params:
+            self._populate_heatmap_band_combo(str(params['heatmap_band']))
         if 'waveform_autoscale' in params:
             self.waveform_autoscale_cb.setChecked(bool(params['waveform_autoscale']))
         self.notch_freq_combo.setEnabled(self.notch_cb.isChecked())
@@ -492,11 +601,24 @@ class SignalPage(NavigationPage):
 
 
     def update_heatmap(self, channel_activities, channel_names=None):
-        """更新热力图"""
+        """更新热力图（montage 模式）"""
         if not self.is_heatmap_enabled():
             return
         if hasattr(self, 'heatmap_widget'):
             self.heatmap_widget.update_heatmap(channel_activities, channel_names)
+
+    def update_heatmap_result(self, result: dict):
+        """更新热力图（自动选择 forward 原生或 montage 模式）"""
+        if not self.is_heatmap_enabled() or not hasattr(self, 'heatmap_widget'):
+            return
+        if result.get('mode') == 'forward' and result.get('info') is not None:
+            self.heatmap_widget.update_heatmap_forward(
+                result['powers'], result['info']
+            )
+        else:
+            self.heatmap_widget.update_heatmap(
+                result.get('powers'), result.get('names')
+            )
     
     def clear_heatmap(self):
         """清除热力图"""
@@ -513,12 +635,23 @@ class SignalPage(NavigationPage):
         if hasattr(self, 'heatmap_widget') and hasattr(self.heatmap_widget, 'set_from_info'):
             self.heatmap_widget.set_from_info(info)
     
+    def _apply_checkbox_styles(self):
+        style = _strong_checkbox_style()
+        for checkbox in (
+            self.notch_cb,
+            self.waveform_autoscale_cb,
+            self.show_heatmap_cb,
+            self.show_fft_cb,
+        ):
+            checkbox.setStyleSheet(style)
+
     def update_theme(self):
         """更新主题颜色"""
         # 调用父类方法更新基础样式（标题、背景等）
         super().update_theme()
         
         from ..themes import get_color
+        self._apply_checkbox_styles()
         
         # 更新图表背景
         bg_color = get_color('bg_card')
@@ -568,6 +701,9 @@ class SignalPage(NavigationPage):
         self.time_window_label.setText(tr('label_time_window'))
         self.show_heatmap_cb.setText(tr('label_show_heatmap'))
         self.show_fft_cb.setText(tr('label_show_fft'))
+        self.heatmap_band_label.setText(tr('label_heatmap_band'))
+        self.heatmap_band_combo.setToolTip(tr('tooltip_heatmap_band'))
+        self._populate_heatmap_band_combo()
         self.waveform_autoscale_cb.setText(tr('label_waveform_autoscale'))
         self.waveform_autoscale_cb.setToolTip(tr('tooltip_waveform_autoscale'))
         
