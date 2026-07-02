@@ -562,7 +562,13 @@ class SimulatorSignal:
         """清空实时显示缓冲区，避免滤波参数变更后新旧结果混杂。"""
         n = self._sim.buffer_size
         if self._sim.time_buffer.size:
-            self._sim.time_buffer.fill(0)
+            sr = max(float(self._sim.sampling_rate), 1.0)
+            last_time = max(
+                float(getattr(self._sim, 'simulation_time', 0.0)) - 1.0 / sr,
+                0.0,
+            )
+            first_time = last_time - (n - 1) / sr
+            self._sim.time_buffer[:] = first_time + np.arange(n) / sr
         for ch_name in self._sim.selected_channels:
             if ch_name not in self._sim.eeg_buffer:
                 self._sim.eeg_buffer[ch_name] = np.zeros(n)
