@@ -13,6 +13,14 @@ from ..output_sink import SimulationOutputSink, OutputSinkError
 
 logger = get_logger(__name__)
 
+_PERF_SUMMARY_INTERVAL = 5.0
+_PERF_WARN_WORKER_MS = 1000.0
+_PERF_WARN_QUEUE_LOW_S = 0.3
+_PERF_WARN_HZ_TOLERANCE = 0.05
+_PERF_WARN_COOLDOWN_S = 5.0
+_PERF_STARTUP_GRACE_S = 3.0
+_PERF_WORKER_WARN_COOLDOWN_S = 10.0
+
 
 class SimulationWorker(QObject):
     request_generate = pyqtSignal(float, int)
@@ -92,6 +100,11 @@ class SimulatorSimulation:
         self._prefill_seconds = 1.5
         self._max_queue_seconds = 3.0
         self._latest_heatmap_result = None
+        self._perf_window_start = None
+        self._perf_last_warn = {}
+        self._perf = None
+        self._perf_grace_until = 0.0
+        self._consume_sample_carry = 0.0
 
     def _start_worker(self):
         self._stop_worker()
@@ -116,6 +129,22 @@ class SimulatorSimulation:
 
     def _queued_seconds(self) -> float:
         return max(0.0, self._generated_until - self._sim.simulation_time)
+
+    def _compute_consume_samples(self, target_time: float, update_hz: int) -> int:
+        """按墙钟追赶仿真进度，避免定时器抖动导致有效输出低于采样率。"""
+        sr = float(self._sim.sampling_rate)
+        nominal = sr / update_hz
+        self._consume_sample_carry += nominal
+        n = int(self._consume_sample_carry)
+        self._consume_sample_carry -= n
+
+        lag_s = max(0.0, target_time - self._sim.simulation_time)
+        if lag_s > 0:
+            lag_samples = int(round(lag_s * sr))
+            max_burst = max(n, int(round(sr * 0.25)))
+            n = min(max(n, lag_samples, 1), max_burst)
+
+        return max(1, n)
 
     def _request_generation_if_needed(self, target_time: float | None = None):
         if self._worker is None or self._worker_busy:
@@ -212,6 +241,7 @@ class SimulatorSimulation:
         self._pending_batches.clear()
         self._generated_until = 0.0
         self._latest_heatmap_result = None
+        self._init_perf_tracker()
 
         # 重置信号生成状态，确保从初始相位开始
         self._sim._signal_states.clear()
@@ -268,6 +298,7 @@ class SimulatorSimulation:
         self._sim.is_running = False
         self._sim.timer.stop()
         self._sim.status_timer.stop()
+        self._flush_perf_summary(force=True)
         self._stop_worker()
         self._close_output_sink()
 
@@ -300,16 +331,18 @@ class SimulatorSimulation:
                 0.0,
                 current_time - getattr(self._sim, '_run_time_origin', current_time),
             )
-            n_samples = max(1, int(round(self._sim.sampling_rate / update_hz)))
+            n_samples = self._compute_consume_samples(target_time, update_hz)
             if n_samples <= 0:
                 return
 
             self._request_generation_if_needed(target_time)
             if not self._pending_batches:
+                self._perf_record_stall()
                 return
 
             t, eeg_data = self._pop_generated_samples(n_samples)
             if t.size == 0 or not eeg_data:
+                self._perf_record_stall()
                 return
 
             ui_t0 = time.perf_counter()
@@ -337,7 +370,7 @@ class SimulatorSimulation:
                 self._sim._last_heatmap_update_time = self._sim.simulation_time
 
             total_ui_ms = (time.perf_counter() - ui_t0) * 1000.0
-            self._log_realtime_perf(consumed, {}, total_ui_ms, buffer_ms, plot_ms, heatmap_ms)
+            self._perf_record_ui(consumed, total_ui_ms, buffer_ms, plot_ms, heatmap_ms)
 
             duration_limit = self._sim.output_page.get_output_config().get('duration', 0)
             if duration_limit > 0 and self._sim.simulation_time >= duration_limit:
@@ -359,14 +392,7 @@ class SimulatorSimulation:
             self._generated_until = max(self._generated_until, float(batch['t_end']))
             if batch.get('heatmap_result') is not None:
                 self._latest_heatmap_result = batch['heatmap_result']
-            self._log_realtime_perf(
-                int(batch['n_samples']),
-                batch.get('timings') or {},
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            )
+            self._perf_record_worker(batch, batch.get('timings') or {})
         except Exception as e:
             logger.error(f"处理后台数据失败: {e}", exc_info=True)
             self.stop_simulation()
@@ -377,30 +403,195 @@ class SimulatorSimulation:
             if self._sim.is_running:
                 self._request_generation_if_needed()
 
-    def _log_realtime_perf(self, n_samples, timings, total_ui_ms, buffer_ms, plot_ms, heatmap_ms):
-        worker_ms = float(timings.get('worker_total_ms', 0.0)) if timings else 0.0
-        if worker_ms <= 35.0 and total_ui_ms <= 25.0 and heatmap_ms <= 40.0:
-            return
+    @staticmethod
+    def _new_perf_stats() -> dict:
+        return {
+            'generated_samples': 0,
+            'generated_batches': 0,
+            'worker_ms_total': 0.0,
+            'worker_ms_max': 0.0,
+            'project_ms_total': 0.0,
+            'project_ms_max': 0.0,
+            'consumed_samples': 0,
+            'consumed_ticks': 0,
+            'stall_ticks': 0,
+            'queue_min': float('inf'),
+            'queue_max': 0.0,
+            'queue_sum': 0.0,
+            'queue_samples': 0,
+            'ui_ms_total': 0.0,
+            'ui_ms_max': 0.0,
+            'buffer_ms_max': 0.0,
+            'plot_ms_max': 0.0,
+            'heatmap_ms_max': 0.0,
+        }
+
+    def _init_perf_tracker(self):
+        self._perf_window_start = time.time()
+        self._perf_last_warn = {}
+        self._perf = self._new_perf_stats()
+        self._perf_grace_until = self._perf_window_start + _PERF_STARTUP_GRACE_S
+        self._consume_sample_carry = 0.0
+
+    def _reset_perf_window(self):
+        self._perf_window_start = time.time()
+        self._perf = self._new_perf_stats()
+
+    def _perf_warn(self, key: str, message: str, cooldown: float = _PERF_WARN_COOLDOWN_S):
         now = time.time()
-        last_log = getattr(self._sim, '_last_perf_log_time', 0.0)
-        if now - last_log < 2.0:
+        last = self._perf_last_warn.get(key, 0.0)
+        if now - last < cooldown:
             return
-        self._sim._last_perf_log_time = now
-        logger.info(
-            "实时性能: samples=%d queued=%.2fs worker=%.1fms(source=%.1f project=%.1f heatmap_power=%.1f noise=%.1f) "
-            "ui=%.1fms(buffer=%.1f plot=%.1f heatmap=%.1f)",
-            n_samples,
-            self._queued_seconds(),
-            worker_ms,
-            float(timings.get('source_ms', 0.0)) if timings else 0.0,
-            float(timings.get('project_ms', 0.0)) if timings else 0.0,
-            float(timings.get('heatmap_power_ms', 0.0)) if timings else 0.0,
-            float(timings.get('noise_ms', 0.0)) if timings else 0.0,
-            total_ui_ms,
-            buffer_ms,
-            plot_ms,
-            heatmap_ms,
+        self._perf_last_warn[key] = now
+        logger.warning(message)
+
+    def _perf_record_queue(self):
+        if self._perf is None:
+            return
+        queued = self._queued_seconds()
+        perf = self._perf
+        perf['queue_min'] = min(perf['queue_min'], queued)
+        perf['queue_max'] = max(perf['queue_max'], queued)
+        perf['queue_sum'] += queued
+        perf['queue_samples'] += 1
+        if 0 < queued < _PERF_WARN_QUEUE_LOW_S:
+            self._perf_warn(
+                'queue_low',
+                f"实时落后: 队列缓冲不足 queued={queued:.2f}s < {_PERF_WARN_QUEUE_LOW_S:.1f}s",
+            )
+
+    def _perf_record_stall(self):
+        if self._perf is None:
+            return
+        self._perf['stall_ticks'] += 1
+        queued = self._queued_seconds()
+        if time.time() >= self._perf_grace_until:
+            self._perf_warn(
+                'stall',
+                f"实时落后: 空队列跳过，无样本可输出 queued={queued:.2f}s",
+            )
+        self._perf_record_queue()
+        self._maybe_flush_perf_summary()
+
+    def _perf_record_worker(self, batch: dict, timings: dict):
+        if self._perf is None:
+            return
+        worker_ms = float(timings.get('worker_total_ms', 0.0))
+        n_samples = int(batch['n_samples'])
+        perf = self._perf
+        perf['generated_samples'] += n_samples
+        perf['generated_batches'] += 1
+        perf['worker_ms_total'] += worker_ms
+        perf['worker_ms_max'] = max(perf['worker_ms_max'], worker_ms)
+        project_ms = float(timings.get('project_ms', 0.0))
+        perf['project_ms_total'] += project_ms
+        perf['project_ms_max'] = max(perf['project_ms_max'], project_ms)
+        self._perf_record_queue()
+        if worker_ms > _PERF_WARN_WORKER_MS:
+            self._perf_warn(
+                'worker_slow',
+                f"实时落后: worker单批={worker_ms:.1f}ms > {_PERF_WARN_WORKER_MS:.0f}ms "
+                f"(project={project_ms:.1f} source={float(timings.get('source_ms', 0.0)):.1f} "
+                f"heatmap_power={float(timings.get('heatmap_power_ms', 0.0)):.1f} "
+                f"noise={float(timings.get('noise_ms', 0.0)):.1f} queued={self._queued_seconds():.2f}s)",
+                cooldown=_PERF_WORKER_WARN_COOLDOWN_S,
+            )
+        self._maybe_flush_perf_summary()
+
+    def _perf_record_ui(self, consumed: int, total_ui_ms: float, buffer_ms: float,
+                        plot_ms: float, heatmap_ms: float):
+        if self._perf is None:
+            return
+        perf = self._perf
+        perf['consumed_samples'] += consumed
+        perf['consumed_ticks'] += 1
+        perf['ui_ms_total'] += total_ui_ms
+        perf['ui_ms_max'] = max(perf['ui_ms_max'], total_ui_ms)
+        perf['buffer_ms_max'] = max(perf['buffer_ms_max'], buffer_ms)
+        perf['plot_ms_max'] = max(perf['plot_ms_max'], plot_ms)
+        perf['heatmap_ms_max'] = max(perf['heatmap_ms_max'], heatmap_ms)
+        self._perf_record_queue()
+        self._maybe_flush_perf_summary()
+
+    def _maybe_flush_perf_summary(self):
+        if self._perf_window_start is None:
+            return
+        elapsed = time.time() - self._perf_window_start
+        if elapsed < _PERF_SUMMARY_INTERVAL:
+            return
+        self._flush_perf_summary(force=False)
+
+    def _flush_perf_summary(self, force: bool = False):
+        if self._perf is None or self._perf_window_start is None:
+            return
+        elapsed = time.time() - self._perf_window_start
+        if not force and elapsed < _PERF_SUMMARY_INTERVAL:
+            return
+
+        perf = self._perf
+        has_activity = (
+            perf['consumed_ticks'] > 0
+            or perf['generated_batches'] > 0
+            or perf['stall_ticks'] > 0
         )
+        if not has_activity:
+            self._reset_perf_window()
+            return
+
+        target_hz = float(self._sim.sampling_rate)
+        effective_hz = perf['consumed_samples'] / elapsed if elapsed > 0 else 0.0
+        worker_avg = (
+            perf['worker_ms_total'] / perf['generated_batches']
+            if perf['generated_batches'] else 0.0
+        )
+        project_avg = (
+            perf['project_ms_total'] / perf['generated_batches']
+            if perf['generated_batches'] else 0.0
+        )
+        if perf['queue_samples'] > 0:
+            queue_min = perf['queue_min'] if perf['queue_min'] != float('inf') else 0.0
+            queue_avg = perf['queue_sum'] / perf['queue_samples']
+            queue_str = f"{queue_min:.1f}~{perf['queue_max']:.1f}s(avg={queue_avg:.1f})"
+        else:
+            queue_str = "n/a"
+        ui_avg = perf['ui_ms_total'] / perf['consumed_ticks'] if perf['consumed_ticks'] else 0.0
+        behind = False
+        if perf['consumed_samples'] > 0 and target_hz > 0:
+            deviation = abs(effective_hz - target_hz) / target_hz
+            behind = deviation > _PERF_WARN_HZ_TOLERANCE
+        status = '落后' if (behind or perf['stall_ticks'] > 0) else '正常'
+
+        logger.info(
+            "实时性能[%.0fs] 状态=%s: 生成=%d批(avg=%.0fms,max=%.0fms) 消费=%dtick 输出=%d点(%.1f/%.0fHz) "
+            "队列=%s 空队列跳过=%d次 project(avg=%.0fms,max=%.0fms) "
+            "UI=avg=%.0fms(max=%.0fms,heatmap_max=%.0fms)",
+            elapsed,
+            status,
+            perf['generated_batches'],
+            worker_avg,
+            perf['worker_ms_max'],
+            perf['consumed_ticks'],
+            perf['consumed_samples'],
+            effective_hz,
+            target_hz,
+            queue_str,
+            perf['stall_ticks'],
+            project_avg,
+            perf['project_ms_max'],
+            ui_avg,
+            perf['ui_ms_max'],
+            perf['heatmap_ms_max'],
+        )
+
+        if perf['stall_ticks'] > 0:
+            logger.warning(
+                "实时落后: 过去%.0fs内空队列跳过=%d次，有效输出=%.1fHz",
+                elapsed,
+                perf['stall_ticks'],
+                effective_hz,
+            )
+
+        self._reset_perf_window()
 
     def _on_worker_failed(self, message: str):
         self._worker_busy = False
