@@ -1,6 +1,7 @@
 """信号缓冲区与采样率/时间窗口同步。"""
 
 import numpy as np
+from ..rolling_array import RollingArray
 
 from ...utils import tr, get_logger
 
@@ -62,18 +63,18 @@ class SimulatorBuffers:
             return
 
         if preserve_recent and self._sim.time_buffer.size > 0:
-            self._sim.time_buffer = self._resize_array_preserve_tail(
-                self._sim.time_buffer, new_size)
+            self._sim.time_buffer = RollingArray(new_size, self._resize_array_preserve_tail(
+                self._sim.time_buffer, new_size))
             for ch in list(self._sim.eeg_buffer.keys()):
-                self._sim.eeg_buffer[ch] = self._resize_array_preserve_tail(
-                    self._sim.eeg_buffer[ch], new_size)
+                self._sim.eeg_buffer[ch] = RollingArray(new_size, self._resize_array_preserve_tail(
+                    self._sim.eeg_buffer[ch], new_size))
             for dipole_id in list(self._sim.signal_buffer.keys()):
                 self._sim.signal_buffer[dipole_id] = self._resize_array_preserve_tail(
                     self._sim.signal_buffer[dipole_id], new_size)
         else:
-            self._sim.time_buffer = np.zeros(new_size)
+            self._sim.time_buffer = RollingArray(new_size)
             for ch in list(self._sim.eeg_buffer.keys()):
-                self._sim.eeg_buffer[ch] = np.zeros(new_size)
+                self._sim.eeg_buffer[ch] = RollingArray(new_size)
             for dipole_id in list(self._sim.signal_buffer.keys()):
                 self._sim.signal_buffer[dipole_id] = np.zeros(new_size)
 
@@ -112,7 +113,7 @@ class SimulatorBuffers:
     def _init_signal_buffers(self):
         """初始化信号缓冲区"""
         self._sim.buffer_size = self._compute_buffer_size()
-        self._sim.time_buffer = np.zeros(self._sim.buffer_size)
+        self._sim.time_buffer = RollingArray(self._sim.buffer_size)
         self._sim.signal_buffer.clear()
         for patch in self._sim.patches.values():
             for dipole in patch.dipoles:

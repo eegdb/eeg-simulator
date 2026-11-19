@@ -210,6 +210,8 @@ class SimulatorUI:
                 self._sim.status_output.setText("📄 EDF")
             elif output_format == 'fif':
                 self._sim.status_output.setText("📄 FIFF")
+            elif output_format == 'biosignal':
+                self._sim.status_output.setText("🔌 BioSignal")
 
     def _update_status_time(self):
         """更新运行时间"""

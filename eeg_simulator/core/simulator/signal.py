@@ -1,8 +1,10 @@
 """信号生成、耦合、投影、噪声与实时滤波。"""
 
 import copy
+import threading
 
 import numpy as np
+from ..rolling_array import RollingArray
 
 from ...models.coupling import PatchCouplingEngine
 from ...utils import tr, get_logger
@@ -30,6 +32,8 @@ class SimulatorSignal:
         self._heatmap_forward_cache_key = None
         self._heatmap_forward_series = None
         self._analysis_filter_cache = {}
+        self._filter_lock = threading.RLock()
+        self.filter_revision = 0
 
     def _generate_patch_signals_batch(self, t, n_samples):
         """批量生成Patch信号 - 保持相位连续性"""
@@ -381,38 +385,26 @@ class SimulatorSignal:
         self._heatmap_forward_cache_key = None
         self._heatmap_forward_series = None
 
-    def _update_buffers_batch(self, t, patch_signals, eeg_data, n_samples):
+    def _update_buffers_batch(self, t, patch_signals, eeg_data, n_samples, *, filtered_uV=False):
         """批量更新缓冲区 - 对新数据实时滤波后再存入"""
         self.invalidate_heatmap_forward_cache()
-        take = min(n_samples, self._sim.buffer_size)
-
-        # 更新时间缓冲区
-        if take >= self._sim.buffer_size:
-            self._sim.time_buffer[:] = t[-self._sim.buffer_size:]
-        else:
-            self._sim.time_buffer[:-take] = self._sim.time_buffer[take:]
-            self._sim.time_buffer[-take:] = t[-take:]
+        self._sim.time_buffer.append(t)
 
         # 更新EEG缓冲区 - 只对新数据进行滤波
         output_batch = {}
         for ch_name, signal in eeg_data.items():
             if ch_name not in self._sim.eeg_buffer:
-                self._sim.eeg_buffer[ch_name] = np.zeros(self._sim.buffer_size)
+                self._sim.eeg_buffer[ch_name] = RollingArray(self._sim.buffer_size)
 
             # 转换为uV
-            signal_uV = signal * 1e6
+            signal_uV = signal if filtered_uV else signal * 1e6
 
             # 只对新数据(n_samples个点)进行实时滤波
-            if n_samples > 0:
+            if n_samples > 0 and not filtered_uV:
                 signal_uV = self._apply_filter(signal_uV, ch_name)
 
             # 存入缓冲区
-            if take >= self._sim.buffer_size:
-                self._sim.eeg_buffer[ch_name][:] = signal_uV[-self._sim.buffer_size:]
-            else:
-                buf = self._sim.eeg_buffer[ch_name]
-                buf[:-take] = buf[take:]
-                buf[-take:] = signal_uV[-take:]
+            self._sim.eeg_buffer[ch_name].append(signal_uV)
             if ch_name in self._sim.selected_channels:
                 output_batch[ch_name] = signal_uV.copy()
 
@@ -420,6 +412,10 @@ class SimulatorSignal:
             self._sim._output_sink.write_batch(output_batch)
 
     def _init_filter_states(self):
+        with self._filter_lock:
+            return self._init_filter_states_unlocked()
+
+    def _init_filter_states_unlocked(self):
         """初始化实时滤波状态和系数
 
         根据当前滤波参数计算滤波器系数和初始状态，
@@ -505,7 +501,7 @@ class SimulatorSignal:
 
         for ch_name in self._sim.selected_channels:
             if ch_name not in self._sim.eeg_buffer:
-                self._sim.eeg_buffer[ch_name] = np.zeros(n)
+                self._sim.eeg_buffer[ch_name] = RollingArray(n)
             raw = eeg_data.get(ch_name)
             if raw is None:
                 self._sim.eeg_buffer[ch_name][:] = 0
@@ -518,6 +514,10 @@ class SimulatorSignal:
         logger.debug(f"显示缓冲区已预热: {n} 点, t={self._sim.simulation_time:.2f}s")
 
     def _apply_filter(self, data, ch_name):
+        with self._filter_lock:
+            return self._apply_filter_unlocked(data, ch_name)
+
+    def _apply_filter_unlocked(self, data, ch_name):
         """应用实时有状态滤波
 
         使用保存的滤波器状态进行单向实时滤波，避免边界效应。
@@ -571,13 +571,14 @@ class SimulatorSignal:
             self._sim.time_buffer[:] = first_time + np.arange(n) / sr
         for ch_name in self._sim.selected_channels:
             if ch_name not in self._sim.eeg_buffer:
-                self._sim.eeg_buffer[ch_name] = np.zeros(n)
+                self._sim.eeg_buffer[ch_name] = RollingArray(n)
             else:
                 self._sim.eeg_buffer[ch_name].fill(0)
 
     def _on_filter_changed(self):
         """滤波参数改变时重新初始化滤波器并清空显示缓冲"""
         logger.info("滤波参数已改变，重新初始化滤波器")
+        self.filter_revision += 1
         if self._sim.is_running:
             self._init_filter_states()
             self._clear_display_buffers()

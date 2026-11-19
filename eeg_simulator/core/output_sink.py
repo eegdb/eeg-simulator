@@ -104,7 +104,7 @@ class SimulationOutputSink:
             return
 
         if self.format == 'lsl':
-            data = np.array(arrays, dtype=np.float32)
+            data = np.array(arrays, dtype=np.float32).T
             self._lsl_outlet.push_chunk(data)
         elif self.format == 'edf':
             for ch, arr in zip(self.channel_names, arrays):

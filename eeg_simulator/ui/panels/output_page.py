@@ -45,6 +45,9 @@ class OutputPage(NavigationPage):
         self.output_dir = None
         self._filename = ''
         self._device_name = 'EEGSimulator'
+        self._biosignal_port = ''
+        self._biosignal_mapping = ''
+        self._biosignal_range = '±8.333 mV'
         self._setup_content()
     
     def _setup_content(self):
@@ -77,6 +80,7 @@ class OutputPage(NavigationPage):
         self.output_combo.addItem('LSL (Lab Streaming Layer)', 'lsl')
         self.output_combo.addItem('EDF (European Data Format)', 'edf')
         self.output_combo.addItem('FIFF (MNE format)', 'fif')
+        self.output_combo.addItem('BioSignal Generator (USB)', 'biosignal')
         self.output_combo.currentIndexChanged.connect(self._on_output_format_changed)
         format_layout.addWidget(self.output_combo)
         
@@ -151,6 +155,10 @@ class OutputPage(NavigationPage):
         """初始化输出配置UI"""
         self._sync_filename_from_ui()
         self._sync_device_name_from_ui()
+        if hasattr(self, 'biosignal_port_input'):
+            self._biosignal_port = self.biosignal_port_input.text().strip()
+            self._biosignal_mapping = self.biosignal_mapping_input.text().strip()
+            self._biosignal_range = self.biosignal_range_combo.currentData()
         self._clear_output_config()
         
         output_format = self.output_combo.currentData()
@@ -195,6 +203,21 @@ class OutputPage(NavigationPage):
                     f"color: {get_color('text_main')}; font-size: 12px;"
                 )
             
+        elif output_format == 'biosignal':
+            hardware_layout = QVBoxLayout()
+            self.biosignal_port_input = QLineEdit(self._biosignal_port)
+            self.biosignal_port_input.setPlaceholderText('USB 端口（留空自动发现）')
+            hardware_layout.addWidget(self.biosignal_port_input)
+            self.biosignal_range_combo = QComboBox()
+            for label in ('±8.333 mV', '±16.667 mV', '±33.223 mV', '±125.000 mV', '±2.147 V'):
+                self.biosignal_range_combo.addItem(label, label)
+            self.biosignal_range_combo.setCurrentIndex(max(0, self.biosignal_range_combo.findData(self._biosignal_range)))
+            hardware_layout.addWidget(self.biosignal_range_combo)
+            self.biosignal_mapping_input = QLineEdit(self._biosignal_mapping)
+            self.biosignal_mapping_input.setPlaceholderText('CH1, CH2…对应的 EEG 通道名；留空按已选顺序')
+            hardware_layout.addWidget(self.biosignal_mapping_input)
+            hardware_layout.addWidget(QLabel('设备仅支持 256/512/1024/2048/4096 Hz；未映射端子输出 0 µV'))
+            self.output_config_layout.addLayout(hardware_layout)
         elif output_format == 'lsl':
             # LSL输出配置
             lsl_layout = QVBoxLayout()
@@ -216,6 +239,7 @@ class OutputPage(NavigationPage):
         for attr in (
             'filename_input', 'filename_label', 'output_dir_label',
             'select_dir_btn', 'device_name_input', 'device_name_label',
+            'biosignal_port_input', 'biosignal_mapping_input', 'biosignal_range_combo',
         ):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -282,6 +306,9 @@ class OutputPage(NavigationPage):
     
     def update_simulation_status(self, is_running, elapsed_time_str="00:00:00"):
         """更新仿真状态"""
+        self.sr_group.setEnabled(not is_running)
+        self.format_group.setEnabled(not is_running)
+        self.duration_group.setEnabled(not is_running)
         if is_running:
             self.sim_control_btn.setText(tr('btn_stop_sim'))
             self.sim_control_btn.setStyleSheet(f"""
@@ -324,6 +351,10 @@ class OutputPage(NavigationPage):
         """获取输出配置"""
         self._sync_filename_from_ui()
         self._sync_device_name_from_ui()
+        if hasattr(self, 'biosignal_port_input'):
+            self._biosignal_port = self.biosignal_port_input.text().strip()
+            self._biosignal_mapping = self.biosignal_mapping_input.text().strip()
+            self._biosignal_range = self.biosignal_range_combo.currentData()
         fmt = self.output_combo.currentData()
         return {
             'format': fmt,
@@ -332,6 +363,9 @@ class OutputPage(NavigationPage):
             'output_dir': self.output_dir,
             'filename': self._filename if fmt in ('edf', 'fif') else '',
             'device_name': self._device_name if fmt == 'lsl' else 'EEGSimulator',
+            'biosignal_port': self._biosignal_port,
+            'biosignal_mapping': self._biosignal_mapping,
+            'biosignal_range': self._biosignal_range,
         }
 
     def apply_output_config(self, config: dict):
@@ -349,6 +383,13 @@ class OutputPage(NavigationPage):
 
         self._filename = config.get('filename', '') or ''
         self._device_name = config.get('device_name', '') or 'EEGSimulator'
+        self._biosignal_port = config.get('biosignal_port', '') or ''
+        self._biosignal_mapping = config.get('biosignal_mapping', '') or ''
+        self._biosignal_range = config.get('biosignal_range', '±8.333 mV')
+        if fmt == 'biosignal':
+            self.biosignal_port_input.setText(self._biosignal_port)
+            self.biosignal_mapping_input.setText(self._biosignal_mapping)
+            self.biosignal_range_combo.setCurrentIndex(max(0, self.biosignal_range_combo.findData(self._biosignal_range)))
         output_dir = config.get('output_dir')
         self.output_dir = output_dir if output_dir and os.path.isdir(output_dir) else None
 

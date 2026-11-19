@@ -15,6 +15,7 @@ from ...utils.resources import load_app_icon
 from ..signal_engine import SignalEngine
 from ..mne_simulator import MNESimulator
 from ..output_sink import SimulationOutputSink
+from ..rolling_array import RollingArray
 
 from .ui import SimulatorUI
 from .buffers import SimulatorBuffers
@@ -82,7 +83,7 @@ class EEGSimulator(QMainWindow):
         self._last_heatmap_update_time = 0.0
         self.heatmap_refresh_interval = self.config.get('heatmap_refresh_interval', 1000) / 1000.0
 
-        self.time_buffer = np.zeros(self.buffer_size)
+        self.time_buffer = RollingArray(self.buffer_size)
         self.signal_buffer = {}
         self.eeg_buffer = {}
         self._output_sink: Optional[SimulationOutputSink] = None

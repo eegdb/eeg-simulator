@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from ...ui.styles import COLORS
 from ...utils import tr, get_logger
 from ..output_sink import SimulationOutputSink, OutputSinkError
+from ..output_config import OutputConfig, create_output_sink
+from ..simulation_clock import SimulationClock
 
 logger = get_logger(__name__)
 
@@ -86,14 +88,65 @@ class SimulationWorker(QObject):
             self.failed.emit(str(e))
 
 
+class BioSignalErrorBridge(QObject):
+    failed = pyqtSignal(object)
+
+    def __init__(self, simulation, parent):
+        super().__init__(parent)
+        self._simulation = simulation
+        self.failed.connect(self._handle_error, Qt.ConnectionType.QueuedConnection)
+
+    @pyqtSlot(object)
+    def _handle_error(self, error):
+        self._simulation._on_biosignal_error(error)
+
+
+class FilterWorker(QObject):
+    request_filter = pyqtSignal(object)
+    ready = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, simulator):
+        super().__init__()
+        self._sim = simulator
+        self.request_filter.connect(self.filter_batch, Qt.ConnectionType.QueuedConnection)
+
+    @pyqtSlot(object)
+    def filter_batch(self, batch):
+        try:
+            with self._sim.signal._filter_lock:
+                filtered = {
+                    name: self._sim.signal._apply_filter(values * 1e6, name)
+                    for name, values in batch['eeg_data'].items()
+                }
+            self.ready.emit((batch['t'], filtered, batch['revision']))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class FilterResultBridge(QObject):
+    def __init__(self, simulation, parent):
+        super().__init__(parent)
+        self._simulation = simulation
+
+    @pyqtSlot(object)
+    def handle_ready(self, result):
+        self._simulation._on_filtered_ready(result)
+
+
 class SimulatorSimulation:
     """SimulatorSimulation 服务。"""
 
     def __init__(self, simulator):
         self._sim = simulator
+        self._biosignal_error_bridge = BioSignalErrorBridge(self, simulator)
+        self._filter_result_bridge = FilterResultBridge(self, simulator)
         self._worker_thread = None
         self._worker = None
         self._worker_busy = False
+        self._filter_thread = None
+        self._filter_worker = None
+        self._filter_busy = False
         self._pending_batches = deque()
         self._generated_until = 0.0
         self._chunk_seconds = 1.0
@@ -105,6 +158,8 @@ class SimulatorSimulation:
         self._perf = None
         self._perf_grace_until = 0.0
         self._consume_sample_carry = 0.0
+        self._clock = None
+        self._output_config = None
 
     def _start_worker(self):
         self._stop_worker()
@@ -116,9 +171,18 @@ class SimulatorSimulation:
         self._worker.batch_ready.connect(self._on_worker_batch_ready)
         self._worker.failed.connect(self._on_worker_failed)
         self._worker_thread.start()
+        self._filter_thread = QThread(self._sim)
+        self._filter_worker = FilterWorker(self._sim)
+        self._filter_worker.moveToThread(self._filter_thread)
+        self._filter_thread.finished.connect(self._filter_worker.deleteLater)
+        self._filter_worker.ready.connect(
+            self._filter_result_bridge.handle_ready, Qt.ConnectionType.QueuedConnection)
+        self._filter_worker.failed.connect(self._on_worker_failed)
+        self._filter_thread.start()
 
     def _stop_worker(self):
         self._worker_busy = False
+        self._filter_busy = False
         self._pending_batches.clear()
         self._latest_heatmap_result = None
         if self._worker_thread is not None:
@@ -126,6 +190,11 @@ class SimulatorSimulation:
             self._worker_thread.wait()
         self._worker = None
         self._worker_thread = None
+        if self._filter_thread is not None:
+            self._filter_thread.quit()
+            self._filter_thread.wait()
+        self._filter_worker = None
+        self._filter_thread = None
 
     def _queued_seconds(self) -> float:
         return max(0.0, self._generated_until - self._sim.simulation_time)
@@ -219,7 +288,7 @@ class SimulatorSimulation:
             QMessageBox.warning(self._sim, tr('warning'), tr('msg_no_patches'))
             return False
 
-        output_config = self._sim.output_page.get_output_config()
+        output_config = OutputConfig.from_page(self._sim.output_page)
         if not self._validate_output_config(output_config):
             return False
         if not self._confirm_file_output_duration(output_config):
@@ -236,6 +305,7 @@ class SimulatorSimulation:
         # 更新状态
         self._sim.is_running = True
         self._sim.simulation_time = 0.0
+        self._clock = SimulationClock(self._sim.sampling_rate)
         self._sim._run_start_time = time.time()
         self._sim._last_update_time = None
         self._pending_batches.clear()
@@ -266,11 +336,13 @@ class SimulatorSimulation:
         self._sim.status_run.setText("● " + tr('status_running'))
         self._sim.status_run.setStyleSheet(f"color: {COLORS['accent']};")
         self._sim.output_page.update_simulation_status(True)
+        self._sim.output_page.status_label.setToolTip('')
+        self._sim.status_output.setToolTip('')
 
         # 初始化实时滤波状态，并预热显示缓冲区
         self._sim.signal._init_filter_states()
         self._sim.signal.warm_up_display_buffer()
-        self._sim._run_time_origin = time.time() - self._sim.simulation_time
+        self._clock.start()
 
         # 初始化图表并立即绘制预热后的数据
         self._sim.signal_page.update_plots(self._sim.selected_channels)
@@ -320,17 +392,15 @@ class SimulatorSimulation:
         """更新仿真（定时器回调）"""
         if not self._sim.is_running:
             return
+        if self._filter_busy:
+            return
 
         try:
             # 计算时间
-            current_time = time.time()
-            self._sim._last_update_time = current_time
+            self._sim._last_update_time = time.monotonic()
 
             update_hz = max(5, int(getattr(self._sim, '_simulation_update_hz', 20)))
-            target_time = max(
-                0.0,
-                current_time - getattr(self._sim, '_run_time_origin', current_time),
-            )
+            target_time = self._clock.target_time()
             n_samples = self._compute_consume_samples(target_time, update_hz)
             if n_samples <= 0:
                 return
@@ -345,12 +415,31 @@ class SimulatorSimulation:
                 self._perf_record_stall()
                 return
 
+            self._filter_busy = True
+            self._filter_worker.request_filter.emit({
+                't': t, 'eeg_data': eeg_data,
+                'revision': self._sim.signal.filter_revision,
+            })
+        except Exception as e:
+            logger.error(f"仿真更新失败: {e}", exc_info=True)
+            self.stop_simulation()
+            QMessageBox.critical(self._sim, tr('error'), tr('msg_simulation_failed', str(e)))
+
+    def _on_filtered_ready(self, result):
+        self._filter_busy = False
+        if not self._sim.is_running:
+            return
+        t, eeg_data, revision = result
+        if revision != self._sim.signal.filter_revision:
+            self._sim.simulation_time = self._clock.advance(len(t))
+            return
+        try:
             ui_t0 = time.perf_counter()
             consumed = int(t.size)
             section = time.perf_counter()
-            self._sim.signal._update_buffers_batch(t, {}, eeg_data, consumed)
+            self._sim.signal._update_buffers_batch(t, {}, eeg_data, consumed, filtered_uV=True)
             buffer_ms = (time.perf_counter() - section) * 1000.0
-            self._sim.simulation_time = float(t[-1] + 1.0 / self._sim.sampling_rate)
+            self._sim.simulation_time = self._clock.advance(consumed)
 
             plot_ms = 0.0
             if (self._sim.simulation_time - self._sim._last_waveform_update_time
@@ -372,7 +461,7 @@ class SimulatorSimulation:
             total_ui_ms = (time.perf_counter() - ui_t0) * 1000.0
             self._perf_record_ui(consumed, total_ui_ms, buffer_ms, plot_ms, heatmap_ms)
 
-            duration_limit = self._sim.output_page.get_output_config().get('duration', 0)
+            duration_limit = self._output_config.duration if self._output_config else 0
             if duration_limit > 0 and self._sim.simulation_time >= duration_limit:
                 logger.info(f"达到设定时长 {duration_limit}s，自动停止仿真")
                 self.stop_simulation()
@@ -427,18 +516,18 @@ class SimulatorSimulation:
         }
 
     def _init_perf_tracker(self):
-        self._perf_window_start = time.time()
+        self._perf_window_start = time.monotonic()
         self._perf_last_warn = {}
         self._perf = self._new_perf_stats()
         self._perf_grace_until = self._perf_window_start + _PERF_STARTUP_GRACE_S
         self._consume_sample_carry = 0.0
 
     def _reset_perf_window(self):
-        self._perf_window_start = time.time()
+        self._perf_window_start = time.monotonic()
         self._perf = self._new_perf_stats()
 
     def _perf_warn(self, key: str, message: str, cooldown: float = _PERF_WARN_COOLDOWN_S):
-        now = time.time()
+        now = time.monotonic()
         last = self._perf_last_warn.get(key, 0.0)
         if now - last < cooldown:
             return
@@ -465,7 +554,7 @@ class SimulatorSimulation:
             return
         self._perf['stall_ticks'] += 1
         queued = self._queued_seconds()
-        if time.time() >= self._perf_grace_until:
+        if time.monotonic() >= self._perf_grace_until:
             self._perf_warn(
                 'stall',
                 f"实时落后: 空队列跳过，无样本可输出 queued={queued:.2f}s",
@@ -516,7 +605,7 @@ class SimulatorSimulation:
     def _maybe_flush_perf_summary(self):
         if self._perf_window_start is None:
             return
-        elapsed = time.time() - self._perf_window_start
+        elapsed = time.monotonic() - self._perf_window_start
         if elapsed < _PERF_SUMMARY_INTERVAL:
             return
         self._flush_perf_summary(force=False)
@@ -524,7 +613,7 @@ class SimulatorSimulation:
     def _flush_perf_summary(self, force: bool = False):
         if self._perf is None or self._perf_window_start is None:
             return
-        elapsed = time.time() - self._perf_window_start
+        elapsed = time.monotonic() - self._perf_window_start
         if not force and elapsed < _PERF_SUMMARY_INTERVAL:
             return
 
@@ -600,24 +689,34 @@ class SimulatorSimulation:
         self.stop_simulation()
         QMessageBox.critical(self._sim, tr('error'), tr('msg_simulation_failed', message))
 
-    def _validate_output_config(self, output_config: dict) -> bool:
+    def _on_biosignal_error(self, error):
+        if not self._sim.is_running:
+            return
+        message = f"BioSignal Generator {getattr(error, 'port', None) or ''}: {error.message}"
+        logger.error(message)
+        self._sim.output_page.status_label.setText(message)
+        self._sim.output_page.status_label.setToolTip(message)
+        self._sim.status_output.setText('⚠️ BioSignal')
+        self._sim.status_output.setToolTip(message)
+
+    def _validate_output_config(self, output_config: OutputConfig) -> bool:
         """校验输出目录、文件名等（EDF/FIFF 必填）"""
-        fmt = output_config.get('format', 'lsl')
+        fmt = output_config.format
         ok, msg_key = SimulationOutputSink.validate(
             fmt,
             self._sim.selected_channels,
-            output_config.get('output_dir'),
-            output_config.get('filename', ''),
+            output_config.output_dir,
+            output_config.filename,
         )
         if not ok:
             QMessageBox.warning(self._sim, tr('warning'), tr(msg_key))
             return False
         return True
 
-    def _confirm_file_output_duration(self, output_config: dict) -> bool:
+    def _confirm_file_output_duration(self, output_config: OutputConfig) -> bool:
         """文件输出时长超过 1 小时或为无限时请求用户确认；LSL 无限制"""
-        fmt = output_config.get('format', 'lsl')
-        duration = float(output_config.get('duration', 0))
+        fmt = output_config.format
+        duration = output_config.duration
         if not SimulationOutputSink.needs_duration_confirmation(fmt, duration):
             return True
 
@@ -644,17 +743,12 @@ class SimulatorSimulation:
             return f"{hours}:{minutes:02d}:{secs:02d}"
         return f"{minutes}:{secs:02d}"
 
-    def _init_output_sink(self, output_config: dict) -> bool:
+    def _init_output_sink(self, output_config: OutputConfig) -> bool:
         """初始化 LSL / EDF / FIF 输出"""
-        fmt = output_config.get('format', 'lsl')
-
-        self._sim._output_sink = SimulationOutputSink(
-            fmt=fmt,
-            channel_names=self._sim.selected_channels,
-            sampling_rate=self._sim.sampling_rate,
-            output_dir=output_config.get('output_dir'),
-            filename=output_config.get('filename', ''),
-            device_name=output_config.get('device_name', 'EEGSimulator'),
+        self._output_config = output_config
+        self._sim._output_sink = create_output_sink(
+            output_config, self._sim.selected_channels,
+            on_error=self._biosignal_error_bridge.failed.emit,
         )
         try:
             self._sim._output_sink.start()
